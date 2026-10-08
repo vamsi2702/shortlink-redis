@@ -1,0 +1,13 @@
+.venv/
+*.egg-info/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+.ruff_cache/
+.mypy_cache/
+.env
+*.aof
+data/
+.idea/
+.vscode/
