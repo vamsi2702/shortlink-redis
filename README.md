@@ -29,6 +29,7 @@ ruff check .                        # lint
 
 | Method and path | Auth | What it does |
 |---|---|---|
+| `GET /` | none | A basic web page: shorten links, sign in, manage your links |
 | `GET /health` | none | Liveness check |
 | `POST /auth/register` | none | Create an account (`email`, `password` of 8-72 bytes) |
 | `POST /auth/login` | none | Returns a bearer token (valid 60 minutes) |

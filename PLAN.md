@@ -154,17 +154,17 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 
 **2.1 TCP basics**
 - Learn first: what a socket is, client vs server, what TCP is.
-- [ ] Plain blocking echo server and client with `socket`
+- [x] Plain blocking echo server and client with `socket`
 - **Done when:** the client sends text and the server echoes it back.
 
 **2.2 Async echo server**
 - Learn first: `async`/`await`, the event loop.
-- [ ] Rewrite the echo server with `asyncio` streams
+- [x] Rewrite the echo server with `asyncio` streams
 - **Done when:** 50 clients can connect at once and all get replies.
 
 **2.3 Understand RESP**
 - Learn first: read the RESP spec on redis.io (simple strings, errors, integers, bulk strings, arrays).
-- [ ] Run real Redis in Docker; use `redis-cli` and watch the raw traffic
+- [x] Run real Redis in Docker; use `redis-cli` and watch the raw traffic
 - **Done when:** you can write out by hand what `SET a 1` looks like on the wire.
 
 **2.4 RESP parser and encoder**
@@ -177,11 +177,11 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** `redis-cli -p <port> set a 1` and `get a` work against your server.
 
 **2.6 More commands**
-- [ ] `DEL`, `EXISTS`, `INCR`, plus error replies for unknown commands and wrong arguments
+- [ ] `DEL`, `EXISTS`, `INCR`, `INCRBY` (`redis-py` sends `INCRBY key 1` for `incr()`), plus error replies for unknown commands and wrong arguments, copied from [docs/RESP.md](docs/RESP.md)
 - **Done when:** each command has a test.
 
 **2.7 redis-py compatibility**
-- [ ] Handshake stubs: `HELLO` (reply with an error so the client falls back to RESP2), `CLIENT SETNAME`/`SETINFO`, `COMMAND`
+- [ ] Handshake: `CLIENT SETINFO`/`SETNAME` reply `+OK`; `HELLO 2` replies like real Redis and any other version gets `-NOPROTO`; `COMMAND`. The API's client uses `protocol=2`, so it never sends `HELLO` (see [docs/RESP.md](docs/RESP.md))
 - **Done when:** `redis-py` can `set` and `get` against your server.
 
 ### Phase 3 — MiniRedis features
@@ -415,7 +415,7 @@ No external dataset is required. Generate it with `bench/seed.py`:
 ## 8. Scope
 
 **In scope:** Phases 0–5 (the core project), and Phase 6 (deployment) as an optional extension.
-**Out of scope:** full Redis compatibility, clustering, Lua scripting, a frontend UI, production security hardening beyond URL validation and auth basics, multi-region or high-availability setups.
+**Out of scope:** full Redis compatibility, clustering, Lua scripting, a full frontend app (a basic single page at `/` is included), production security hardening beyond URL validation and auth basics, multi-region or high-availability setups.
 
 ## 9. Risks
 
