@@ -15,5 +15,13 @@ services:
       timeout: 3s
       retries: 10
 
+  # Real Redis, used only as a reference to compare MiniRedis against (RESP bytes, benchmarks).
+  # Not started by default: run `docker compose up -d redis`.
+  redis:
+    image: redis:7
+    profiles: ["reference"]
+    ports:
+      - "6379:6379"
+
 volumes:
   pgdata:
