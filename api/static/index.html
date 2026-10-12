@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ShortLink</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c2230; --muted: #667085;
+    --border: #d9dde5; --accent: #2563eb; --accent-text: #ffffff;
+    --danger: #c0392b; --ok: #1e7e34;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218; --card: #181d27; --text: #e6e9f0; --muted: #98a2b3;
+      --border: #2b3342; --accent: #5b8def; --accent-text: #0b1020;
+      --danger: #ff7a6b; --ok: #5ed38a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 1.75rem; }
+  h2 { margin: 0 0 12px; font-size: 1.1rem; }
+  .muted { color: var(--muted); }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; margin-top: 16px;
+  }
+  label { display: block; margin-bottom: 4px; font-size: 0.9rem; color: var(--muted); }
+  input {
+    width: 100%; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  input:focus-visible, button:focus-visible, a:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  button {
+    padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text); font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button.danger { color: var(--danger); }
+  .row { display: flex; gap: 8px; }
+  .row > input { flex: 1; min-width: 0; }
+  .stack > * + * { margin-top: 12px; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  #message { min-height: 1.5em; margin: 16px 0 0; }
+  #message.ok { color: var(--ok); }
+  #message.error { color: var(--danger); }
+  #result { margin-top: 12px; padding: 12px; border: 1px dashed var(--border); border-radius: 8px; }
+  #result-link { font-weight: 600; word-break: break-all; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li {
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+    padding: 10px 0; border-top: 1px solid var(--border);
+  }
+  li:first-child { border-top: 0; }
+  .info { min-width: 0; }
+  .info a { font-weight: 600; word-break: break-all; }
+  .target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; }
+  .actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .actions button { padding: 6px 10px; font-size: 0.9rem; }
+  @media (max-width: 520px) {
+    li { flex-direction: column; align-items: stretch; }
+    .actions { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>ShortLink</h1>
+  <p class="muted">Paste a long link and get a short one.</p>
+
+  <section class="card">
+    <h2>Shorten a link</h2>
+    <form id="shorten-form">
+      <label for="url">Long URL</label>
+      <div class="row">
+        <input id="url" type="text" inputmode="url" autocomplete="off"
+               placeholder="https://example.com/a/very/long/path">
+        <button class="primary" type="submit">Shorten</button>
+      </div>
+    </form>
+    <div id="result" hidden>
+      <div class="muted">Your short link</div>
+      <a id="result-link" href="#" target="_blank" rel="noopener"></a>
+      <div style="margin-top: 8px"><button id="copy-result" type="button">Copy</button></div>
+    </div>
+  </section>
+
+  <section class="card" id="auth-out">
+    <h2>Sign in</h2>
+    <p class="muted" style="margin-top: 0">
+      Sign in to keep track of your links. Links made while signed out can't be edited or deleted.
+    </p>
+    <form id="auth-form" class="stack">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="text" inputmode="email" autocomplete="username">
+      </div>
+      <div>
+        <label for="password">Password (8 or more characters)</label>
+        <input id="password" type="password" autocomplete="current-password">
+      </div>
+      <div class="buttons">
+        <button class="primary" type="submit">Log in</button>
+        <button id="register" type="button">Create account</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" id="auth-in" hidden>
+    <div class="row" style="align-items: center; justify-content: space-between">
+      <div>Signed in as <strong id="who"></strong></div>
+      <button id="logout" type="button">Log out</button>
+    </div>
+  </section>
+
+  <section class="card" id="links-card" hidden>
+    <h2>Your links</h2>
+    <p id="empty" class="muted" hidden>You haven't shortened any links while signed in yet.</p>
+    <ul id="links"></ul>
+  </section>
+
+  <p id="message" role="status" aria-live="polite"></p>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const TOKEN_KEY = "shortlink_token";
+
+  let token = null;
+  try { token = localStorage.getItem(TOKEN_KEY); } catch { /* storage blocked */ }
+
+  function setToken(value) {
+    token = value;
+    try {
+      if (value) localStorage.setItem(TOKEN_KEY, value);
+      else localStorage.removeItem(TOKEN_KEY);
+    } catch { /* storage blocked: you will just be signed out after a reload */ }
+  }
+
+  function say(text, kind = "") {
+    const el = $("message");
+    el.textContent = text;
+    el.className = kind; // "", "ok" or "error"
+  }
+
+  // The API answers errors as {"detail": "text"} or, for bad input, {"detail": [{"msg": ...}]}
+  function errorText(data, status) {
+    const detail = data && data.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail.length) {
+      return detail.map((d) => String(d.msg).replace(/^Value error, /, "")).join("; ");
+    }
+    return `Request failed (${status})`;
+  }
+
+  async function api(path, { method = "GET", body } = {}) {
+    const headers = {};
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const response = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    let data = null;
+    if (response.status !== 204) {
+      try { data = await response.json(); } catch { /* no JSON body */ }
+    }
+    if (!response.ok) {
+      if (response.status === 401 && token && path !== "/auth/login") {
+        signedOut();
+        throw new Error("Your session expired. Please sign in again.");
+      }
+      throw new Error(errorText(data, response.status));
+    }
+    return data;
+  }
+
+  const shortUrl = (code) => `${location.origin}/${code}`;
+
+  async function copy(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      say("Copied to clipboard.", "ok");
+    } catch {
+      say("Could not copy automatically. Select the link and copy it by hand.", "error");
+    }
+  }
+
+  function button(label, onClick, className = "") {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.className = className;
+    b.addEventListener("click", onClick);
+    return b;
+  }
+
+  // Text from the server is always inserted as plain text (textContent), never parsed as HTML,
+  // so a malicious URL can't inject markup into the page.
+  function renderLinks(links) {
+    const list = $("links");
+    list.replaceChildren();
+    $("empty").hidden = links.length > 0;
+    for (const link of links) {
+      const li = document.createElement("li");
+
+      const info = document.createElement("div");
+      info.className = "info";
+      const a = document.createElement("a");
+      a.href = shortUrl(link.code);
+      a.textContent = `${location.host}/${link.code}`;
+      a.target = "_blank";
+      a.rel = "noopener";
+      const target = document.createElement("div");
+      target.className = "target muted";
+      target.textContent = link.long_url;
+      target.title = link.long_url;
+      info.append(a, target);
+
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      actions.append(
+        button("Copy", () => copy(shortUrl(link.code))),
+        button("Edit", () => editLink(link)),
+        button("Delete", () => deleteLink(link), "danger"),
+      );
+
+      li.append(info, actions);
+      list.append(li);
+    }
+  }
+
+  async function loadLinks() {
+    renderLinks(await api("/links"));
+  }
+
+  async function editLink(link) {
+    const next = window.prompt("New destination URL:", link.long_url);
+    if (next === null || next.trim() === "" || next.trim() === link.long_url) return;
+    try {
+      await api(`/links/${link.code}`, { method: "PATCH", body: { url: next } });
+      say("Link updated.", "ok");
+      await loadLinks();
+    } catch (err) {
+      say(err.message, "error");
+    }
+  }
+
+  async function deleteLink(link) {
+    if (!window.confirm(`Delete ${location.host}/${link.code}? This cannot be undone.`)) return;
+    try {
+      await api(`/links/${link.code}`, { method: "DELETE" });
+      say("Link deleted.", "ok");
+      await loadLinks();
+    } catch (err) {
+      say(err.message, "error");
+    }
+  }
+
+  function showSignedIn(email) {
+    $("auth-out").hidden = true;
+    $("auth-in").hidden = false;
+    $("links-card").hidden = false;
+    $("who").textContent = email;
+  }
+
+  function signedOut() {
+    setToken(null);
+    $("auth-out").hidden = false;
+    $("auth-in").hidden = true;
+    $("links-card").hidden = true;
+    $("links").replaceChildren();
+  }
+
+  async function login(email, password) {
+    const data = await api("/auth/login", { method: "POST", body: { email, password } });
+    setToken(data.access_token);
+    const me = await api("/auth/me");
+    showSignedIn(me.email);
+    await loadLinks();
+  }
+
+  $("shorten-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = $("url").value.trim();
+    if (!url) return;
+    try {
+      const link = await api("/shorten", { method: "POST", body: { url } });
+      const full = shortUrl(link.code);
+      const a = $("result-link");
+      a.href = full;
+      a.textContent = full;
+      $("copy-result").onclick = () => copy(full);
+      $("result").hidden = false;
+      $("url").value = "";
+      say("Short link created.", "ok");
+      if (token) await loadLinks();
+    } catch (err) {
+      $("result").hidden = true;
+      say(err.message, "error");
+    }
+  });
+
+  $("auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await login($("email").value.trim(), $("password").value);
+      $("password").value = "";
+      say("Signed in.", "ok");
+    } catch (err) {
+      say(err.message, "error");
+    }
+  });
+
+  $("register").addEventListener("click", async () => {
+    const email = $("email").value.trim();
+    const password = $("password").value;
+    if (!email || !password) {
+      say("Enter an email and a password (8 or more characters).", "error");
+      return;
+    }
+    try {
+      await api("/auth/register", { method: "POST", body: { email, password } });
+      await login(email, password);
+      $("password").value = "";
+      say("Account created and signed in.", "ok");
+    } catch (err) {
+      say(err.message, "error");
+    }
+  });
+
+  $("logout").addEventListener("click", () => {
+    signedOut();
+    $("result").hidden = true;
+    say("Signed out.");
+  });
+
+  // On page load, restore the session if a saved token is still valid.
+  (async () => {
+    if (!token) return;
+    try {
+      const me = await api("/auth/me");
+      showSignedIn(me.email);
+      await loadLinks();
+    } catch { /* api() already signed us out if the token was rejected */ }
+  })();
+})();
+</script>
+</body>
+</html>

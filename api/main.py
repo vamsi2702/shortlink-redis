@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from api.routes import auth, links, redirect
+from api.routes import auth, frontend, links, redirect
 
 app = FastAPI(title="ShortLink")
 
@@ -10,6 +10,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+app.include_router(frontend.router)
 app.include_router(auth.router)
 app.include_router(links.router)
 # Keep this last: "/{code}" matches any single-segment path, so it must not shadow the routes above.
