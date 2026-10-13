@@ -4,24 +4,29 @@ Each connected client gets one `handle_client` task on a single event loop. The 
 
     bytes from the socket -> RESP parser -> command layer -> RESP encoder -> bytes to the socket
 
-(step 2.2 built the socket part, 2.4 the parser and encoder, 2.5 to 2.7 the commands).
+(step 2.2 built the socket part, 2.4 the parser and encoder, 2.5 to 2.7 the commands). Next to the
+clients, background tasks run on the same loop: the expiry cleaner (3.2) and the log syncer (3.5).
 """
 
 import argparse
 import asyncio
 import itertools
 import logging
+from pathlib import Path
 
 from miniredis import commands
+from miniredis.aof import FSYNC_POLICIES, AppendOnlyFile
 from miniredis.commands import ClientState, Context
 from miniredis.resp import Parser, ProtocolError, RespError, encode
 from miniredis.store import Store
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 6380  # next to Redis's 6379, so both can run side by side
+DEFAULT_AOF_PATH = "data/miniredis.aof"
 RECV_SIZE = 65536
 EXPIRE_INTERVAL = 0.1  # seconds between runs of the expiry cleaner
 EXPIRE_BATCH = 1000  # heap entries the cleaner looks at per run
+AOF_SYNC_INTERVAL = 1.0  # seconds between fsyncs with the "everysec" policy
 
 log = logging.getLogger("miniredis.server")
 
@@ -47,10 +52,10 @@ def encode_reply(reply: object) -> bytes:
 
 
 async def handle_client(
-    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, store: Store
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, server: "MiniRedisServer"
 ) -> None:
     peer = writer.get_extra_info("peername")
-    ctx = Context(store=store, client=ClientState(id=next(_client_ids)))
+    ctx = Context(store=server.store, client=ClientState(id=next(_client_ids)), aof=server.aof)
     parser = Parser(allow_inline=True)
     log.info("client %d connected: %s", ctx.client.id, peer)
     try:
@@ -59,17 +64,21 @@ async def handle_client(
             if not data:  # the client closed the connection
                 break
             parser.feed(data)
+            replies: list[bytes] = []
             try:
                 for message in parser.messages():
                     reply = run_message(ctx, message)
                     if reply is not _NO_REPLY:
-                        writer.write(encode_reply(reply))
+                        replies.append(encode_reply(reply))
                     if ctx.client.close_after_reply:
                         break
             except ProtocolError as exc:
                 # the bytes are not valid RESP, so we cannot know where the next command starts
-                writer.write(encode(RespError(f"ERR Protocol error: {exc}")))
+                replies.append(encode(RespError(f"ERR Protocol error: {exc}")))
                 ctx.client.close_after_reply = True
+            replies = server.commit(replies)  # the log is written BEFORE any reply leaves
+            if replies:
+                writer.write(b"".join(replies))
             await writer.drain()  # waits if the client is slow to read our replies
     except ConnectionError as exc:  # reset by the peer
         log.info("client %d error: %s", ctx.client.id, exc)
@@ -83,8 +92,8 @@ async def handle_client(
 
 
 class MiniRedisServer:
-    """Everything one running MiniRedis consists of: the listening socket, the shared store, and
-    the background tasks that work next to the clients on the same event loop."""
+    """Everything one running MiniRedis consists of: the listening socket, the shared store, the
+    append-only file, and the background tasks that work next to the clients on the same loop."""
 
     def __init__(
         self,
@@ -92,18 +101,29 @@ class MiniRedisServer:
         port: int = DEFAULT_PORT,
         *,
         store: Store | None = None,
+        aof_path: str | Path | None = None,
+        appendfsync: str = "everysec",
         expire_interval: float = EXPIRE_INTERVAL,
     ) -> None:
         self.host = host
         self.port = port
         self.store = store if store is not None else Store()
+        self.aof: AppendOnlyFile | None = None
+        if aof_path is not None:
+            self.aof = AppendOnlyFile(aof_path, appendfsync)
         self._expire_interval = expire_interval
         self._server: asyncio.Server | None = None
-        self._tasks: list[asyncio.Task[None]] = []
+        self._expire_task: asyncio.Task[None] | None = None
+        self._aof_task: asyncio.Task[None] | None = None
+        self._stopping = asyncio.Event()
 
     async def start(self) -> None:
+        if self.aof is not None:
+            self.aof.open()
         self._server = await asyncio.start_server(self._on_connect, self.host, self.port)
-        self._tasks.append(asyncio.create_task(self._expire_loop()))
+        self._expire_task = asyncio.create_task(self._expire_loop())
+        if self.aof is not None and self.aof.fsync_policy == "everysec":
+            self._aof_task = asyncio.create_task(self._aof_loop())
 
     @property
     def address(self) -> tuple[str, int]:
@@ -111,10 +131,26 @@ class MiniRedisServer:
         assert self._server is not None, "call start() first"
         return self._server.sockets[0].getsockname()[:2]
 
+    def commit(self, replies: list[bytes]) -> list[bytes]:
+        """Write the changes logged by this batch of commands to the file. Returns the replies to
+        send: the same ones, or, if the file cannot be written, an error in place of each, because
+        the client must not be told a change is safe when it may not be."""
+        if self.aof is None:
+            return replies
+        try:
+            self.aof.commit()
+        except OSError as exc:
+            log.error("cannot write the append-only file: %s", exc)
+            text = str(exc).replace("\r", " ").replace("\n", " ")
+            return [encode(RespError(f"MISCONF Errors writing to the AOF file: {text}"))] * len(
+                replies
+            )
+        return replies
+
     async def _on_connect(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
-        await handle_client(reader, writer, self.store)
+        await handle_client(reader, writer, self)
 
     async def _expire_loop(self) -> None:
         """Step 3.2: kill expired keys even if nobody ever reads them again."""
@@ -128,30 +164,56 @@ class MiniRedisServer:
                 pause = self._expire_interval
             await asyncio.sleep(pause)
 
+    async def _aof_loop(self) -> None:
+        """Step 3.5: with the 'everysec' policy, fsync the log once a second. The fsync itself
+        runs in a thread, so a slow disk never freezes the event loop."""
+        assert self.aof is not None
+        while not self._stopping.is_set():
+            try:
+                await asyncio.wait_for(self._stopping.wait(), timeout=AOF_SYNC_INTERVAL)
+            except TimeoutError:
+                pass
+            try:
+                await asyncio.to_thread(self.aof.sync)
+            except OSError:
+                log.exception("fsync of the append-only file failed")
+
     async def serve_forever(self) -> None:
         assert self._server is not None, "call start() first"
         await self._server.serve_forever()
 
     async def close(self) -> None:
-        for task in self._tasks:
-            task.cancel()
+        self._stopping.set()
+        if self._expire_task is not None:
+            self._expire_task.cancel()
+        tasks = [t for t in (self._expire_task, self._aof_task) if t is not None]
+        await asyncio.gather(*tasks, return_exceptions=True)  # the syncer finishes its last fsync
         if self._server is not None:
             self._server.close()
             if hasattr(self._server, "close_clients"):  # Python 3.13+: don't wait for clients
                 self._server.close_clients()
             await asyncio.wait_for(self._server.wait_closed(), timeout=5)
+        if self.aof is not None:
+            self.aof.close()
 
 
 async def start_server(
-    host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, store: Store | None = None
+    host: str = DEFAULT_HOST,
+    port: int = DEFAULT_PORT,
+    store: Store | None = None,
+    *,
+    aof_path: str | Path | None = None,
+    appendfsync: str = "everysec",
 ) -> MiniRedisServer:
-    server = MiniRedisServer(host, port, store=store)
+    server = MiniRedisServer(host, port, store=store, aof_path=aof_path, appendfsync=appendfsync)
     await server.start()
     return server
 
 
-async def serve(host: str, port: int) -> None:
-    server = await start_server(host, port)
+async def serve(
+    host: str, port: int, aof_path: str | Path | None, appendfsync: str = "everysec"
+) -> None:
+    server = await start_server(host, port, aof_path=aof_path, appendfsync=appendfsync)
     log.info("MiniRedis listening on %s:%s (Ctrl+C to stop)", *server.address)
     try:
         await server.serve_forever()
@@ -163,11 +225,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="MiniRedis, a Redis-compatible server")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--aof-file", default=DEFAULT_AOF_PATH, help="where changes are logged (%(default)s)"
+    )
+    parser.add_argument(
+        "--no-aof", action="store_true", help="keep everything in memory only; lose it on exit"
+    )
+    parser.add_argument(
+        "--appendfsync", choices=FSYNC_POLICIES, default="everysec", help="see miniredis/aof.py"
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    aof_path = None if args.no_aof else args.aof_file
     try:
-        asyncio.run(serve(args.host, args.port))
+        asyncio.run(serve(args.host, args.port, aof_path, args.appendfsync))
     except KeyboardInterrupt:
         log.info("stopping")
 

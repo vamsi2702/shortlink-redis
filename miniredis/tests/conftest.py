@@ -6,7 +6,7 @@ from collections import deque
 import pytest
 
 from miniredis.resp import Parser, encode_command
-from miniredis.server import start_server
+from miniredis.server import MiniRedisServer, start_server
 from miniredis.store import Store
 
 
@@ -34,11 +34,14 @@ class ServerThread(threading.Thread):
     Blocking clients such as redis-py or plain sockets can then talk to it from the test.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, aof_path=None, appendfsync: str = "everysec") -> None:
         super().__init__(daemon=True)
         self.store = Store()
+        self.redis: MiniRedisServer | None = None  # the running server, for peeking inside
         self.address: tuple[str, int] | None = None
         self.ready = threading.Event()
+        self._aof_path = aof_path
+        self._appendfsync = appendfsync
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
 
@@ -48,13 +51,21 @@ class ServerThread(threading.Thread):
     async def _main(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
-        server = await start_server("127.0.0.1", 0, store=self.store)
-        self.address = server.address
+        self.redis = await start_server(
+            "127.0.0.1",
+            0,
+            store=self.store,
+            aof_path=self._aof_path,
+            appendfsync=self._appendfsync,
+        )
+        self.address = self.redis.address
         self.ready.set()
         await self._stop_event.wait()
-        await server.close()
+        await self.redis.close()
 
     def stop(self) -> None:
+        if not self.is_alive():  # already stopped (a test may stop it itself)
+            return
         if self._loop is not None and self._stop_event is not None:
             self._loop.call_soon_threadsafe(self._stop_event.set)
         self.join(timeout=10)
@@ -101,13 +112,68 @@ class RespClient:
         self.sock.close()
 
 
-@pytest.fixture
-def server():
-    thread = ServerThread()
+def start_server_thread(**options) -> ServerThread:
+    thread = ServerThread(**options)
     thread.start()
     assert thread.ready.wait(timeout=5), "server did not start"
+    return thread
+
+
+@pytest.fixture
+def server():
+    thread = start_server_thread()
     yield thread
     thread.stop()
+
+
+@pytest.fixture
+def make_server():
+    """make_server(aof_path=..., appendfsync=...) starts another server; all stop after the test."""
+    threads: list[ServerThread] = []
+
+    def _make(**options) -> ServerThread:
+        thread = start_server_thread(**options)
+        threads.append(thread)
+        return thread
+
+    yield _make
+    for thread in threads:
+        thread.stop()
+
+
+@pytest.fixture
+def make_client():
+    """make_client(address) opens a client to any server; all are closed after the test."""
+    clients: list[RespClient] = []
+
+    def _make(address: tuple[str, int]) -> RespClient:
+        clients.append(RespClient(address))
+        return clients[-1]
+
+    yield _make
+    for client in clients:
+        client.close()
+
+
+@pytest.fixture
+def aof_path(tmp_path):
+    """Where a test's append-only file lives."""
+    return tmp_path / "test.aof"
+
+
+@pytest.fixture
+def aof_server(aof_path):
+    """A server that logs every change to `aof_path`."""
+    thread = start_server_thread(aof_path=aof_path)
+    yield thread
+    thread.stop()
+
+
+@pytest.fixture
+def aof_client(aof_server):
+    client = RespClient(aof_server.address)
+    yield client
+    client.close()
 
 
 @pytest.fixture

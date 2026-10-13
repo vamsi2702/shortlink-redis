@@ -205,7 +205,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 
 **3.5 AOF write**
 - Learn first: what append-only logs and fsync are.
-- [ ] Log every write command to a file; choose an fsync policy
+- [x] Log every write command to a file; choose an fsync policy
 - **Done when:** the file grows as you send writes.
 
 **3.6 AOF replay**
