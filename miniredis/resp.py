@@ -49,6 +49,17 @@ class RespError:
     message: str
 
 
+class _NullArray:
+    """Marker for a RESP null array (*-1), which real Redis uses, for example, when RPOP with a
+    count finds no such list. It is different on the wire from a null string ($-1), although the
+    parser reads both as None."""
+
+    def __repr__(self) -> str:
+        return "NULL_ARRAY"
+
+
+NULL_ARRAY = _NullArray()
+
 OK = SimpleString("OK")
 PONG = SimpleString("PONG")
 
@@ -78,6 +89,8 @@ def _single_line(text: str) -> bytes:
 def _encode_into(value: object, out: list[bytes]) -> None:
     if value is None:
         out.append(b"$-1\r\n")
+    elif value is NULL_ARRAY:
+        out.append(b"*-1\r\n")
     elif isinstance(value, SimpleString):
         out.append(b"+" + _single_line(value) + CRLF)
     elif isinstance(value, RespError):

@@ -10,10 +10,12 @@ cannot lose a count) without any locks. `test_commands_basic.py` checks that no 
 
 import logging
 import re
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from itertools import islice
 
-from miniredis.resp import OK, PONG, RespError
+from miniredis.resp import NULL_ARRAY, OK, PONG, RespError, SimpleString
 from miniredis.store import Store
 
 log = logging.getLogger("miniredis.commands")
@@ -268,6 +270,101 @@ def incrby(ctx: Context, args: list[bytes]) -> object:
     if amount is None:
         raise CommandError(NOT_AN_INTEGER)
     return _increment(ctx, args[0], amount)
+
+
+# ---- type and lists (step 3.3) ----------------------------------------------------------------
+
+
+def type_name(value: object | None) -> str:
+    if value is None:
+        return "none"
+    if isinstance(value, bytes):
+        return "string"
+    if isinstance(value, deque):
+        return "list"
+    if isinstance(value, dict):
+        return "hash"
+    raise TypeError(f"unknown value type {type(value).__name__}")
+
+
+@command("type", 2)
+def type_(ctx: Context, args: list[bytes]) -> object:
+    return SimpleString(type_name(ctx.store.get(args[0])))
+
+
+def get_list(ctx: Context, key: bytes, *, create: bool = False) -> deque[bytes] | None:
+    """The list at `key`, None if there is none (or a new empty one with create=True), or a
+    WRONGTYPE error if the key holds something else."""
+    value = ctx.store.get(key)
+    if value is None:
+        if not create:
+            return None
+        value = deque()
+        ctx.store.set(key, value)
+        return value
+    if not isinstance(value, deque):
+        raise CommandError(WRONGTYPE)
+    return value
+
+
+def drop_if_empty(ctx: Context, key: bytes, value: object) -> None:
+    """Redis never keeps an empty list or hash around: when the last item goes, the key goes."""
+    if not value:
+        ctx.store.delete(key)
+
+
+@command("lpush", -3)
+def lpush(ctx: Context, args: list[bytes]) -> object:
+    items = get_list(ctx, args[0], create=True)
+    assert items is not None
+    for value in args[1:]:
+        items.appendleft(value)  # each value goes in front of the previous one
+    return len(items)
+
+
+@command("rpop", -2)
+def rpop(ctx: Context, args: list[bytes]) -> object:
+    if len(args) > 2:
+        raise wrong_arity("rpop")
+    count: int | None = None
+    if len(args) == 2:
+        count = parse_int64(args[1])
+        if count is None or count < 0:
+            raise CommandError("ERR value is out of range, must be positive")
+    items = get_list(ctx, args[0])
+    if items is None:
+        return None if count is None else NULL_ARRAY
+    if count is None:
+        value = items.pop()
+        drop_if_empty(ctx, args[0], items)
+        return value
+    popped = [items.pop() for _ in range(min(count, len(items)))]
+    drop_if_empty(ctx, args[0], items)
+    return popped
+
+
+@command("llen", 2)
+def llen(ctx: Context, args: list[bytes]) -> object:
+    items = get_list(ctx, args[0])
+    return 0 if items is None else len(items)
+
+
+@command("lrange", 4)
+def lrange(ctx: Context, args: list[bytes]) -> object:
+    start, stop = parse_int64(args[1]), parse_int64(args[2])
+    if start is None or stop is None:
+        raise CommandError(NOT_AN_INTEGER)
+    items = get_list(ctx, args[0])
+    if items is None:
+        return []
+    size = len(items)
+    if start < 0:  # negative positions count from the end: -1 is the last item
+        start = max(size + start, 0)
+    if stop < 0:
+        stop += size
+    if start > stop or start >= size:
+        return []
+    return list(islice(items, start, min(stop, size - 1) + 1))
 
 
 # ---- expiry (step 3.1) ------------------------------------------------------------------------

@@ -212,6 +212,95 @@ SCENARIOS = {
         ["EXPIRE", "{p}k", "100", "xx", "gt"],
         ["EXPIRE", "{p}k", "100", "xx", "lt"],
     ],
+    "lists": [
+        ["LLEN", "{p}l"],
+        ["LPUSH", "{p}l", "a"],
+        ["LPUSH", "{p}l", "b", "c"],
+        ["LLEN", "{p}l"],
+        ["LRANGE", "{p}l", "0", "-1"],
+        ["TYPE", "{p}l"],
+        ["RPOP", "{p}l"],
+        ["RPOP", "{p}l"],
+        ["RPOP", "{p}l"],
+        ["RPOP", "{p}l"],
+        ["EXISTS", "{p}l"],
+        ["TYPE", "{p}l"],
+        ["LPUSH", "{p}l", ""],
+        ["LRANGE", "{p}l", "0", "-1"],
+        ["RPOP", "{p}l", "9223372036854775807"],
+    ],
+    "rpop with a count": [
+        ["LPUSH", "{p}l", "1", "2", "3", "4", "5"],
+        ["RPOP", "{p}l", "2"],
+        ["RPOP", "{p}l", "0"],
+        ["RPOP", "{p}l", "100"],
+        ["EXISTS", "{p}l"],
+        ["RPOP", "{p}l", "2"],
+        ["RPOP", "{p}nokey", "0"],
+        ["LPUSH", "{p}l", "x"],
+        ["RPOP", "{p}l", "-1"],
+        ["RPOP", "{p}l", "abc"],
+        ["RPOP", "{p}l", "1.5"],
+        ["RPOP", "{p}l", "+1"],
+        ["RPOP", "{p}l", "1", "2"],
+        ["RPOP"],
+        ["RPOP", "{p}l", "1"],
+        ["RPOP", "{p}l", "1"],
+    ],
+    "lrange": [
+        ["LPUSH", "{p}l", "e", "d", "c", "b", "a"],
+        *(
+            ["LRANGE", "{p}l", start, stop]
+            for start, stop in [
+                ("0", "-1"), ("1", "2"), ("-2", "-1"), ("-100", "100"), ("3", "1"), ("10", "20"),
+                ("0", "0"), ("-1", "-1"), ("4", "100"), ("5", "100"), ("0", "-100"),
+                ("9223372036854775807", "9223372036854775807"),
+                ("-9223372036854775808", "-1"), ("a", "1"), ("0", "1.5"), ("", "1"),
+            ]
+        ),
+        ["LRANGE", "{p}nokey", "0", "-1"],
+        ["LRANGE", "{p}l", "0"],
+        ["LRANGE", "{p}l", "0", "1", "2"],
+    ],  # fmt: skip
+    "list arity": [
+        ["LPUSH"],
+        ["LPUSH", "{p}l"],
+        ["LLEN"],
+        ["LLEN", "{p}l", "x"],
+        ["TYPE"],
+        ["TYPE", "a", "b"],
+    ],
+    "list and string types": [
+        ["SET", "{p}s", "v"],
+        ["LLEN", "{p}s"],
+        ["LPUSH", "{p}s", "x"],
+        ["RPOP", "{p}s"],
+        ["RPOP", "{p}s", "2"],
+        ["LRANGE", "{p}s", "0", "-1"],
+        ["LPUSH", "{p}l", "x"],
+        ["GET", "{p}l"],
+        ["INCR", "{p}l"],
+        ["INCRBY", "{p}l", "5"],
+        ["TYPE", "{p}s"],
+        ["TYPE", "{p}l"],
+        ["TYPE", "{p}nothing"],
+        ["SET", "{p}l", "overwrites"],
+        ["TYPE", "{p}l"],
+        ["GET", "{p}l"],
+    ],
+    "lists and expiry": [
+        ["LPUSH", "{p}l", "x"],
+        ["EXPIRE", "{p}l", "100"],
+        ["TTL", "{p}l"],
+        ["LPUSH", "{p}l", "y"],
+        ["TTL", "{p}l"],
+        ["RPOP", "{p}l", "5"],
+        ["EXISTS", "{p}l"],
+        ["TTL", "{p}l"],
+        ["LPUSH", "{p}l", "a", "b"],
+        ["DEL", "{p}l"],
+        ["EXISTS", "{p}l"],
+    ],
     "incr keeps the expiry": [
         ["SET", "{p}k", "5", "EX", "100"],
         ["INCR", "{p}k"],
@@ -261,6 +350,31 @@ def test_hello_2_has_the_same_shape_as_real_redis(connect, connect_real):
     assert ours[::2] == theirs[::2]  # the same field names in the same order
     assert [type(v) for v in ours[1::2]] == [type(v) for v in theirs[1::2]]
     assert ours[ours.index(b"proto") + 1] == theirs[theirs.index(b"proto") + 1] == 2
+
+
+def raw_reply(client, *words) -> bytes:
+    """The exact bytes of the server's answer, without parsing them."""
+    client.sock.sendall(encode_command(*words))
+    client.sock.settimeout(2)
+    return client.sock.recv(65536)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        ("RPOP", "{p}missing"),
+        ("RPOP", "{p}missing", "2"),
+        ("RPOP", "{p}missing", "0"),
+        ("LRANGE", "{p}missing", "0", "-1"),
+        ("GET", "{p}missing"),
+        ("LLEN", "{p}missing"),
+    ],
+)
+def test_nulls_and_empty_arrays_are_the_same_bytes_as_real_redis(words, connect, connect_real):
+    prefix = f"compat-{uuid.uuid4().hex[:8]}:"
+    words = [word.replace("{p}", prefix) for word in words]
+
+    assert raw_reply(connect(), *words) == raw_reply(connect_real(), *words)
 
 
 def test_quit_replies_ok_and_then_both_servers_hang_up(connect, connect_real):

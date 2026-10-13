@@ -196,7 +196,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** expired keys are removed even if nobody reads them.
 
 **3.3 Lists**
-- [ ] `LPUSH`, `RPOP` (and `LLEN`)
+- [x] `LPUSH`, `RPOP` (and `LLEN`)
 - **Done when:** a producer and a consumer can share a queue.
 
 **3.4 Hashes**
