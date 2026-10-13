@@ -173,7 +173,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** the tests pass, including a message that arrives in two pieces.
 
 **2.5 First commands**
-- [ ] Command dispatcher; `PING`, `SET`, `GET`
+- [x] Command dispatcher; `PING`, `SET`, `GET`
 - **Done when:** `redis-cli -p <port> set a 1` and `get a` work against your server.
 
 **2.6 More commands**
