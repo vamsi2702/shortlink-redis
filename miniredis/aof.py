@@ -11,7 +11,9 @@ has been told succeeded is in the file.
 
 import logging
 import os
-from collections.abc import Callable
+import time
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -102,6 +104,53 @@ def replay(
     return result
 
 
+ITEMS_PER_COMMAND = 64  # a big list or hash is written as several commands of this many items
+REWRITE_BUFFER = 1 << 20  # bytes collected before they are written to the new file
+
+
+def rewrite_commands(
+    items: Iterable[tuple[bytes, object, int | None]],
+) -> Iterator[list[bytes]]:
+    """The shortest list of commands that rebuilds `items` (key, value, dies-at or None), as
+    produced by Store.items(): one command per key, or a few for a big list or hash."""
+    for key, value, expire_at in items:
+        if isinstance(value, bytes):
+            if expire_at is None:
+                yield [b"SET", key, value]
+            else:
+                yield [b"SET", key, value, b"PXAT", str(expire_at).encode()]
+            continue
+        if isinstance(value, deque):
+            # LPUSH puts each value in front of the previous one, so to end up with the list
+            # a b c (a first) the values must be pushed in the order c, b, a
+            backwards = list(reversed(value))
+            for start in range(0, len(backwards), ITEMS_PER_COMMAND):
+                yield [b"LPUSH", key, *backwards[start : start + ITEMS_PER_COMMAND]]
+        elif isinstance(value, dict):
+            pairs = list(value.items())
+            for start in range(0, len(pairs), ITEMS_PER_COMMAND):
+                flat = [word for pair in pairs[start : start + ITEMS_PER_COMMAND] for word in pair]
+                yield [b"HSET", key, *flat]
+        else:
+            raise TypeError(f"cannot write a {type(value).__name__} to the log")
+        if expire_at is not None:
+            yield [b"PEXPIREAT", key, str(expire_at).encode()]
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Make a rename in this folder durable. Not possible (or needed) on Windows."""
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _discarded_path(path: Path) -> Path:
     return path.with_name(path.name + ".discarded")
 
@@ -128,6 +177,9 @@ class AppendOnlyFile:
         self.path = Path(path)
         self.fsync_policy = fsync
         self.size = 0  # bytes in the file
+        self.base_size = 0  # the size after the last rewrite (or when the server started)
+        self.rewrites = 0  # how many times the file has been rewritten
+        self.last_rewrite_seconds = 0.0  # how long the last rewrite took
         self.error: str | None = None  # the last write error, until a write succeeds again
         self._fd: int | None = None
         self._pending: list[bytes] = []  # logged by commands but not yet written to the file
@@ -135,9 +187,12 @@ class AppendOnlyFile:
 
     def open(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # a leftover from a rewrite that was interrupted: never part of the log, so remove it
+        self.path.with_name(self.path.name + ".rewrite").unlink(missing_ok=True)
         flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
         self._fd = os.open(self.path, flags, 0o644)
         self.size = os.fstat(self._fd).st_size
+        self.base_size = self.size  # what is already there counts as the starting point
 
     @property
     def pending(self) -> bool:
@@ -177,6 +232,50 @@ class AppendOnlyFile:
             return
         self._unsynced = False  # cleared first: a write during the fsync sets it again
         os.fsync(self._fd)
+
+    def rewrite(self, items: Iterable[tuple[bytes, object, int | None]]) -> int:
+        """Replace the file with the shortest log that rebuilds `items`. Returns the new size.
+
+        The new log is written beside the old one and only moved into place, in one step, once it
+        is complete and on the disk, so a crash or an error at any moment leaves a good log.
+        Changes remembered by `append` but not yet written are already part of `items`, so they
+        are dropped (writing them as well would apply them twice)."""
+        assert self._fd is not None, "the file is not open"
+        started = time.perf_counter()
+        temporary = self.path.with_name(self.path.name + ".rewrite")
+        try:
+            with open(temporary, "wb") as out:
+                chunk: list[bytes] = []
+                chunk_size = 0
+                for words in rewrite_commands(items):
+                    data = encode_command(*words)
+                    chunk.append(data)
+                    chunk_size += len(data)
+                    if chunk_size >= REWRITE_BUFFER:
+                        out.write(b"".join(chunk))
+                        chunk, chunk_size = [], 0
+                out.write(b"".join(chunk))
+                out.flush()
+                os.fsync(out.fileno())  # the new log is on the disk before it replaces the old
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+        os.close(self._fd)
+        self._fd = None
+        try:
+            os.replace(temporary, self.path)  # the old log is replaced in one step
+            self._pending.clear()
+        except OSError:
+            temporary.unlink(missing_ok=True)
+            raise
+        finally:
+            self.open()  # either the new file or, if the replace failed, the old one
+        _fsync_directory(self.path.parent)
+        self._unsynced = False
+        self.base_size = self.size
+        self.rewrites += 1
+        self.last_rewrite_seconds = time.perf_counter() - started
+        return self.size
 
     def close(self) -> None:
         if self._fd is None:

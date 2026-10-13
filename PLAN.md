@@ -221,7 +221,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** `INFO` returns readable stats.
 
 **3.9 (Optional) AOF compaction**
-- [ ] Rewrite the log so it holds only the current state
+- [x] Rewrite the log so it holds only the current state
 - **Done when:** the file shrinks and replay still gives the same data.
 
 **3.10 (Optional) Pub/Sub**

@@ -70,6 +70,8 @@ class Context:
     stats: Stats = field(default_factory=Stats)
     # The server's own facts for INFO (listening port, log file state...), by section name.
     extra_info: Callable[[], dict[str, dict[str, object]]] | None = None
+    # Rewrites the append-only file (None if there is no file). Set by the server.
+    rewrite_aof: Callable[[], None] | None = None
 
     def propagate(self, *words: object) -> None:
         """Record a change in the append-only file, if there is one.
@@ -688,6 +690,16 @@ def command_info(ctx: Context, args: list[bytes]) -> object:
 def info_(ctx: Context, args: list[bytes]) -> object:
     """A report on the server. Takes the time of one pass over all keys (for the memory figure)."""
     return render_info(ctx, [arg.decode("utf-8", "replace") for arg in args]).encode()
+
+
+@command("bgrewriteaof", 1)
+def bgrewriteaof(ctx: Context, args: list[bytes]) -> object:
+    """Compact the append-only file. Real Redis does this in a background process; MiniRedis does
+    it right here, so the reply comes when it is finished and other clients wait meanwhile."""
+    if ctx.rewrite_aof is None:
+        raise CommandError("ERR the append-only file is not enabled")
+    ctx.rewrite_aof()
+    return SimpleString("Append only file rewriting done")
 
 
 @command("quit", -1)

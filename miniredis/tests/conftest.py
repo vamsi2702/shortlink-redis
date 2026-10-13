@@ -34,14 +34,13 @@ class ServerThread(threading.Thread):
     Blocking clients such as redis-py or plain sockets can then talk to it from the test.
     """
 
-    def __init__(self, *, aof_path=None, appendfsync: str = "everysec") -> None:
+    def __init__(self, **options) -> None:
         super().__init__(daemon=True)
         self.store = Store()
         self.redis: MiniRedisServer | None = None  # the running server, for peeking inside
         self.address: tuple[str, int] | None = None
         self.ready = threading.Event()
-        self._aof_path = aof_path
-        self._appendfsync = appendfsync
+        self._options = options  # aof_path, appendfsync, auto_rewrite_min_size, ...
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
 
@@ -51,13 +50,7 @@ class ServerThread(threading.Thread):
     async def _main(self) -> None:
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
-        self.redis = await start_server(
-            "127.0.0.1",
-            0,
-            store=self.store,
-            aof_path=self._aof_path,
-            appendfsync=self._appendfsync,
-        )
+        self.redis = await start_server("127.0.0.1", 0, store=self.store, **self._options)
         self.address = self.redis.address
         self.ready.set()
         await self._stop_event.wait()

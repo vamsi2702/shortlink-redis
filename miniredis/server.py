@@ -27,6 +27,8 @@ RECV_SIZE = 65536
 EXPIRE_INTERVAL = 0.1  # seconds between runs of the expiry cleaner
 EXPIRE_BATCH = 1000  # heap entries the cleaner looks at per run
 AOF_SYNC_INTERVAL = 1.0  # seconds between fsyncs with the "everysec" policy
+AUTO_REWRITE_MIN_SIZE = 64 * 1024 * 1024  # the same defaults as real Redis
+AUTO_REWRITE_PERCENTAGE = 100
 
 log = logging.getLogger("miniredis.server")
 
@@ -61,6 +63,7 @@ async def handle_client(
         aof=server.aof,
         stats=server.stats,
         extra_info=server.extra_info,
+        rewrite_aof=server.rewrite_aof if server.aof is not None else None,
     )
     parser = Parser(allow_inline=True)
     log.info("client %d connected: %s", ctx.client.id, peer)
@@ -113,6 +116,8 @@ class MiniRedisServer:
         aof_path: str | Path | None = None,
         appendfsync: str = "everysec",
         expire_interval: float = EXPIRE_INTERVAL,
+        auto_rewrite_min_size: int = AUTO_REWRITE_MIN_SIZE,
+        auto_rewrite_percentage: int = AUTO_REWRITE_PERCENTAGE,
     ) -> None:
         self.host = host
         self.port = port
@@ -120,6 +125,10 @@ class MiniRedisServer:
         self.aof: AppendOnlyFile | None = None
         if aof_path is not None:
             self.aof = AppendOnlyFile(aof_path, appendfsync)
+        # The file is compacted by itself once it is at least this big AND has grown by this
+        # many percent since it was last compacted (a percentage of 0 turns this off).
+        self._auto_rewrite_min_size = auto_rewrite_min_size
+        self._auto_rewrite_percentage = auto_rewrite_percentage
         self.aof_load: ReplayResult | None = None  # what replaying the file found, once started
         self.stats = Stats()
         self._expire_interval = expire_interval
@@ -151,7 +160,7 @@ class MiniRedisServer:
             self.store.on_expire = lambda key: aof.append([b"DEL", key])
         self._server = await asyncio.start_server(self._on_connect, self.host, self.port)
         self._expire_task = asyncio.create_task(self._expire_loop())
-        if self.aof is not None and self.aof.fsync_policy == "everysec":
+        if self.aof is not None:
             self._aof_task = asyncio.create_task(self._aof_loop())
 
     @property
@@ -169,6 +178,9 @@ class MiniRedisServer:
                 "aof_enabled": 1,
                 "aof_fsync_policy": self.aof.fsync_policy,
                 "aof_current_size": self.aof.size,
+                "aof_base_size": self.aof.base_size,
+                "aof_rewrites": self.aof.rewrites,
+                "aof_last_rewrite_time_sec": round(self.aof.last_rewrite_seconds, 3),
                 "aof_last_write_status": "err" if self.aof.error else "ok",
                 "aof_loaded_commands": load.commands,
                 "aof_loaded_errors": load.errors,
@@ -212,8 +224,9 @@ class MiniRedisServer:
             await asyncio.sleep(pause)
 
     async def _aof_loop(self) -> None:
-        """Step 3.5: with the 'everysec' policy, fsync the log once a second. The fsync itself
-        runs in a thread, so a slow disk never freezes the event loop."""
+        """Once a second: with the 'everysec' policy, fsync the log (step 3.5), and compact it if
+        it has grown too much (step 3.9). The fsync runs in a thread, so a slow disk never
+        freezes the event loop."""
         assert self.aof is not None
         while not self._stopping.is_set():
             try:
@@ -221,9 +234,33 @@ class MiniRedisServer:
             except TimeoutError:
                 pass
             try:
-                await asyncio.to_thread(self.aof.sync)
-            except OSError:
-                log.exception("fsync of the append-only file failed")
+                if self.aof.fsync_policy == "everysec":
+                    await asyncio.to_thread(self.aof.sync)
+                if not self._stopping.is_set() and self.should_rewrite():
+                    self.rewrite_aof()
+            except Exception:  # this housekeeping must never die
+                log.exception("append-only file housekeeping failed")
+
+    def should_rewrite(self) -> bool:
+        """True when the file is big and has grown a lot since it was last compacted."""
+        assert self.aof is not None
+        if self._auto_rewrite_percentage <= 0 or self.aof.size < self._auto_rewrite_min_size:
+            return False
+        growth = self.aof.size - self.aof.base_size
+        return growth * 100 >= self.aof.base_size * self._auto_rewrite_percentage
+
+    def rewrite_aof(self) -> None:
+        """Compact the log: replace it with one that holds just the current data. This runs on
+        the event loop, so clients wait while it works (real Redis forks a child process)."""
+        assert self.aof is not None
+        before = self.aof.size
+        after = self.aof.rewrite(self.store.items())
+        log.info(
+            "rewrote the append-only file: %d -> %d bytes in %.3fs",
+            before,
+            after,
+            self.aof.last_rewrite_seconds,
+        )
 
     async def serve_forever(self) -> None:
         assert self._server is not None, "call start() first"
@@ -248,19 +285,17 @@ async def start_server(
     host: str = DEFAULT_HOST,
     port: int = DEFAULT_PORT,
     store: Store | None = None,
-    *,
-    aof_path: str | Path | None = None,
-    appendfsync: str = "everysec",
+    **options: object,
 ) -> MiniRedisServer:
-    server = MiniRedisServer(host, port, store=store, aof_path=aof_path, appendfsync=appendfsync)
+    """Create and start a server. `options` are the MiniRedisServer keyword arguments:
+    aof_path, appendfsync, expire_interval, auto_rewrite_min_size, auto_rewrite_percentage."""
+    server = MiniRedisServer(host, port, store=store, **options)  # type: ignore[arg-type]
     await server.start()
     return server
 
 
-async def serve(
-    host: str, port: int, aof_path: str | Path | None, appendfsync: str = "everysec"
-) -> None:
-    server = await start_server(host, port, aof_path=aof_path, appendfsync=appendfsync)
+async def serve(host: str, port: int, **options: object) -> None:
+    server = await start_server(host, port, **options)
     log.info("MiniRedis listening on %s:%s (Ctrl+C to stop)", *server.address)
     try:
         await server.serve_forever()
@@ -281,12 +316,29 @@ def main() -> None:
     parser.add_argument(
         "--appendfsync", choices=FSYNC_POLICIES, default="everysec", help="see miniredis/aof.py"
     )
+    parser.add_argument(
+        "--auto-aof-rewrite-min-size",
+        type=int,
+        default=AUTO_REWRITE_MIN_SIZE,
+        help="never compact a log smaller than this many bytes (%(default)s)",
+    )
+    parser.add_argument(
+        "--auto-aof-rewrite-percentage",
+        type=int,
+        default=AUTO_REWRITE_PERCENTAGE,
+        help="compact once the log has grown by this percent since last time; 0 = never",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    aof_path = None if args.no_aof else args.aof_file
+    options = {
+        "aof_path": None if args.no_aof else args.aof_file,
+        "appendfsync": args.appendfsync,
+        "auto_rewrite_min_size": args.auto_aof_rewrite_min_size,
+        "auto_rewrite_percentage": args.auto_aof_rewrite_percentage,
+    }
     try:
-        asyncio.run(serve(args.host, args.port, aof_path, args.appendfsync))
+        asyncio.run(serve(args.host, args.port, **options))
     except KeyboardInterrupt:
         log.info("stopping")
 
