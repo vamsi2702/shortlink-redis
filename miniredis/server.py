@@ -16,7 +16,7 @@ from pathlib import Path
 
 from miniredis import commands
 from miniredis.aof import FSYNC_POLICIES, AppendOnlyFile, ReplayResult, replay
-from miniredis.commands import ClientState, Context
+from miniredis.commands import ClientState, Context, Stats
 from miniredis.resp import Parser, ProtocolError, RespError, encode
 from miniredis.store import Store
 
@@ -55,9 +55,17 @@ async def handle_client(
     reader: asyncio.StreamReader, writer: asyncio.StreamWriter, server: "MiniRedisServer"
 ) -> None:
     peer = writer.get_extra_info("peername")
-    ctx = Context(store=server.store, client=ClientState(id=next(_client_ids)), aof=server.aof)
+    ctx = Context(
+        store=server.store,
+        client=ClientState(id=next(_client_ids)),
+        aof=server.aof,
+        stats=server.stats,
+        extra_info=server.extra_info,
+    )
     parser = Parser(allow_inline=True)
     log.info("client %d connected: %s", ctx.client.id, peer)
+    server.stats.connections_received += 1
+    server.stats.connected_clients += 1
     try:
         while not ctx.client.close_after_reply:
             data = await reader.read(RECV_SIZE)  # the only place we wait for this client
@@ -83,6 +91,7 @@ async def handle_client(
     except ConnectionError as exc:  # reset by the peer
         log.info("client %d error: %s", ctx.client.id, exc)
     finally:
+        server.stats.connected_clients -= 1
         writer.close()
         try:
             await writer.wait_closed()
@@ -112,6 +121,7 @@ class MiniRedisServer:
         if aof_path is not None:
             self.aof = AppendOnlyFile(aof_path, appendfsync)
         self.aof_load: ReplayResult | None = None  # what replaying the file found, once started
+        self.stats = Stats()
         self._expire_interval = expire_interval
         self._server: asyncio.Server | None = None
         self._expire_task: asyncio.Task[None] | None = None
@@ -149,6 +159,22 @@ class MiniRedisServer:
         """The (host, port) it is really listening on (useful when started with port 0)."""
         assert self._server is not None, "call start() first"
         return self._server.sockets[0].getsockname()[:2]
+
+    def extra_info(self) -> dict[str, dict[str, object]]:
+        """Facts only the server knows, for the INFO command."""
+        info: dict[str, dict[str, object]] = {"server": {"tcp_port": self.address[1]}}
+        if self.aof is not None:
+            load = self.aof_load or ReplayResult()
+            info["persistence"] = {
+                "aof_enabled": 1,
+                "aof_fsync_policy": self.aof.fsync_policy,
+                "aof_current_size": self.aof.size,
+                "aof_last_write_status": "err" if self.aof.error else "ok",
+                "aof_loaded_commands": load.commands,
+                "aof_loaded_errors": load.errors,
+                "aof_discarded_bytes": load.discarded_bytes,
+            }
+        return info
 
     def commit(self, replies: list[bytes]) -> list[bytes]:
         """Write the changes logged by this batch of commands to the file. Returns the replies to

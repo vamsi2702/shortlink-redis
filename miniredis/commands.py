@@ -10,12 +10,14 @@ cannot lose a count) without any locks. `test_commands_basic.py` checks that no 
 
 import logging
 import re
+import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import islice
 from typing import Protocol
 
+from miniredis.info import render as render_info
 from miniredis.resp import NULL_ARRAY, OK, PONG, RespError, SimpleString
 from miniredis.store import Store
 
@@ -47,12 +49,27 @@ class ChangeLog(Protocol):
 
 
 @dataclass
+class Stats:
+    """Counters for the whole server, shown by INFO. One is shared by every client."""
+
+    started_at: float = field(default_factory=time.time)
+    connections_received: int = 0
+    connected_clients: int = 0
+    commands_processed: int = 0
+    keyspace_hits: int = 0
+    keyspace_misses: int = 0
+
+
+@dataclass
 class Context:
     """Everything a command handler may use."""
 
     store: Store
     client: ClientState
     aof: ChangeLog | None = None
+    stats: Stats = field(default_factory=Stats)
+    # The server's own facts for INFO (listening port, log file state...), by section name.
+    extra_info: Callable[[], dict[str, dict[str, object]]] | None = None
 
     def propagate(self, *words: object) -> None:
         """Record a change in the append-only file, if there is one.
@@ -98,6 +115,14 @@ def parse_int64(raw: bytes) -> int | None:
     return value if INT64_MIN <= value <= INT64_MAX else None
 
 
+def note_lookup(ctx: Context, found: bool) -> None:
+    """Count a key lookup by a read command as a hit or a miss (shown by INFO)."""
+    if found:
+        ctx.stats.keyspace_hits += 1
+    else:
+        ctx.stats.keyspace_misses += 1
+
+
 def safe_text(raw: bytes) -> str:
     """Bytes as text that is safe to put in an error reply (no CR or LF, which would end it)."""
     return raw.decode("utf-8", "replace").replace("\r", " ").replace("\n", " ")
@@ -122,6 +147,8 @@ def execute(ctx: Context, words: list[bytes]) -> object:
     except Exception:  # a bug in one command must not take the whole server down
         log.exception("command %s crashed", spec.name)
         return RespError("ERR internal error")
+    finally:
+        ctx.stats.commands_processed += 1  # counted after it ran, so INFO does not count itself
 
 
 def _unknown_command(words: list[bytes]) -> RespError:
@@ -252,7 +279,9 @@ def set_(ctx: Context, args: list[bytes]) -> object:
 
 @command("get", 2)
 def get(ctx: Context, args: list[bytes]) -> object:
-    return get_string(ctx, args[0])  # None becomes a RESP null
+    value = get_string(ctx, args[0])
+    note_lookup(ctx, value is not None)
+    return value  # None becomes a RESP null
 
 
 @command("del", -2)
@@ -267,7 +296,12 @@ def del_(ctx: Context, args: list[bytes]) -> object:
 @command("exists", -2)
 def exists(ctx: Context, args: list[bytes]) -> object:
     """How many of the keys exist; a key listed twice is counted twice."""
-    return sum(ctx.store.exists(key) for key in args)
+    present = 0
+    for key in args:
+        found = ctx.store.exists(key)
+        note_lookup(ctx, found)
+        present += found
+    return present
 
 
 def _increment(ctx: Context, key: bytes, amount: int) -> int:
@@ -319,7 +353,9 @@ def type_name(value: object | None) -> str:
 
 @command("type", 2)
 def type_(ctx: Context, args: list[bytes]) -> object:
-    return SimpleString(type_name(ctx.store.get(args[0])))
+    value = ctx.store.get(args[0])
+    note_lookup(ctx, value is not None)
+    return SimpleString(type_name(value))
 
 
 def get_list(ctx: Context, key: bytes, *, create: bool = False) -> deque[bytes] | None:
@@ -380,6 +416,7 @@ def rpop(ctx: Context, args: list[bytes]) -> object:
 @command("llen", 2)
 def llen(ctx: Context, args: list[bytes]) -> object:
     items = get_list(ctx, args[0])
+    note_lookup(ctx, items is not None)
     return 0 if items is None else len(items)
 
 
@@ -389,6 +426,7 @@ def lrange(ctx: Context, args: list[bytes]) -> object:
     if start is None or stop is None:
         raise CommandError(NOT_AN_INTEGER)
     items = get_list(ctx, args[0])
+    note_lookup(ctx, items is not None)
     if items is None:
         return []
     size = len(items)
@@ -438,6 +476,7 @@ def hset(ctx: Context, args: list[bytes]) -> object:
 @command("hget", 3)
 def hget(ctx: Context, args: list[bytes]) -> object:
     fields = get_hash(ctx, args[0])
+    note_lookup(ctx, fields is not None)
     return None if fields is None else fields.get(args[1])
 
 
@@ -445,6 +484,7 @@ def hget(ctx: Context, args: list[bytes]) -> object:
 def hgetall(ctx: Context, args: list[bytes]) -> object:
     """Every field and value as one flat list: field, value, field, value, ..."""
     fields = get_hash(ctx, args[0])
+    note_lookup(ctx, fields is not None)
     if fields is None:
         return []
     return [item for pair in fields.items() for item in pair]
@@ -514,12 +554,15 @@ _register_expire_command("pexpireat", 1, absolute=True)
 def ttl(ctx: Context, args: list[bytes]) -> object:
     """Seconds left (rounded to the nearest second); -2 no such key, -1 never expires."""
     remaining = ctx.store.ttl_ms(args[0])
+    note_lookup(ctx, remaining != -2)
     return remaining if remaining < 0 else (remaining + 500) // 1000
 
 
 @command("pttl", 2)
 def pttl(ctx: Context, args: list[bytes]) -> object:
-    return ctx.store.ttl_ms(args[0])
+    remaining = ctx.store.ttl_ms(args[0])
+    note_lookup(ctx, remaining != -2)
+    return remaining
 
 
 @command("persist", 2)
@@ -639,6 +682,12 @@ def command_info(ctx: Context, args: list[bytes]) -> object:
     if subcommand == b"DOCS":
         return []
     raise CommandError(f"ERR unknown subcommand '{safe_text(args[0])}'. Try COMMAND HELP.")
+
+
+@command("info", -1)
+def info_(ctx: Context, args: list[bytes]) -> object:
+    """A report on the server. Takes the time of one pass over all keys (for the memory figure)."""
+    return render_info(ctx, [arg.decode("utf-8", "replace") for arg in args]).encode()
 
 
 @command("quit", -1)

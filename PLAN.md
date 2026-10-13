@@ -217,7 +217,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** the server starts cleanly after each of these.
 
 **3.8 `INFO` command**
-- [ ] Ops count, connected clients, key count, memory estimate
+- [x] Ops count, connected clients, key count, memory estimate
 - **Done when:** `INFO` returns readable stats.
 
 **3.9 (Optional) AOF compaction**

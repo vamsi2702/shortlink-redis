@@ -9,12 +9,24 @@ first ("lazy" expiry), so an expired key is never visible.
 """
 
 import heapq
+import sys
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
 
 
 def now_ms() -> int:
     return time.time_ns() // 1_000_000
+
+
+def _value_size(value: object) -> int:
+    """Bytes Python uses for one stored value, including what is inside lists and hashes."""
+    size = sys.getsizeof(value)
+    if isinstance(value, dict):
+        size += sum(sys.getsizeof(k) + sys.getsizeof(v) for k, v in value.items())
+    elif isinstance(value, deque):
+        size += sum(sys.getsizeof(item) for item in value)
+    return size
 
 
 class Store:
@@ -165,3 +177,18 @@ class Store:
 
     def expiring_count(self) -> int:
         return len(self._expires)
+
+    def average_ttl_ms(self) -> int:
+        """The average time left, in ms, of the keys that have an expiry (0 if there are none)."""
+        now = self._clock()
+        remaining = [at - now for at in self._expires.values() if at > now]
+        return sum(remaining) // len(remaining) if remaining else 0
+
+    def memory_estimate(self) -> int:
+        """A rough count of the bytes Python uses for the data. It looks at every key, so it
+        takes time in proportion to the number of keys: fine for INFO, not for every command."""
+        total = sys.getsizeof(self._data) + sys.getsizeof(self._expires)
+        total += sys.getsizeof(self._heap)
+        for key, value in self._data.items():
+            total += sys.getsizeof(key) + _value_size(value)
+        return total
