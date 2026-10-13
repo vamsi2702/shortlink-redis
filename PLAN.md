@@ -213,7 +213,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** data survives a restart, and expired keys stay expired.
 
 **3.7 Crash safety**
-- [ ] Tests: kill mid-write, truncated file, corrupted last entry
+- [x] Tests: kill mid-write, truncated file, corrupted last entry
 - **Done when:** the server starts cleanly after each of these.
 
 **3.8 `INFO` command**
