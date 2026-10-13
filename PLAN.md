@@ -181,7 +181,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** each command has a test.
 
 **2.7 redis-py compatibility**
-- [ ] Handshake: `CLIENT SETINFO`/`SETNAME` reply `+OK`; `HELLO 2` replies like real Redis and any other version gets `-NOPROTO`; `COMMAND`. The API's client uses `protocol=2`, so it never sends `HELLO` (see [docs/RESP.md](docs/RESP.md))
+- [x] Handshake: `CLIENT SETINFO`/`SETNAME` reply `+OK`; `HELLO 2` replies like real Redis and any other version gets `-NOPROTO`; `COMMAND`. The API's client uses `protocol=2`, so it never sends `HELLO` (see [docs/RESP.md](docs/RESP.md))
 - **Done when:** `redis-py` can `set` and `get` against your server.
 
 ### Phase 3 — MiniRedis features

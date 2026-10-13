@@ -25,6 +25,30 @@ pytest --cov=api --cov-report=term-missing   # with coverage
 ruff check .                        # lint
 ```
 
+## MiniRedis
+
+A Redis-compatible server written from scratch (see [PLAN.md](PLAN.md), Phases 2 and 3).
+
+```powershell
+python -m miniredis.server            # listens on 127.0.0.1:6380
+```
+
+It speaks RESP2, so `redis-cli` and `redis-py` work. With `redis-py`, **use `protocol=2`**: its
+default asks for RESP3 first, and MiniRedis answers `NOPROTO unsupported protocol version`.
+
+```python
+import redis
+r = redis.Redis(port=6380, protocol=2)
+r.set("name", "vamsi")
+r.get("name")          # b'vamsi'
+r.incr("hits")         # 1
+```
+
+Commands so far: `PING`, `ECHO`, `SET` (no options yet), `GET`, `DEL`, `EXISTS`, `INCR`, `INCRBY`,
+`CLIENT` (`ID`, `SETNAME`, `GETNAME`, `SETINFO`), `HELLO 2`, `COMMAND COUNT`, `QUIT`. Expiry, lists,
+hashes and persistence come next. Replies are checked against real Redis by the tests in
+`miniredis/tests/test_compat_real_redis.py` (run `docker compose up -d redis` to enable them).
+
 ## API
 
 | Method and path | Auth | What it does |

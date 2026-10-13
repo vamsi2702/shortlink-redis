@@ -139,10 +139,20 @@ def test_unknown_command_error_cannot_be_used_to_inject_extra_replies(ctx):
     assert "\n" not in reply.message
 
 
-def test_unknown_command_stops_echoing_arguments_after_about_128_bytes(ctx):
+def test_unknown_command_echoes_at_most_128_bytes_of_arguments_cutting_the_last_one(ctx):
     reply = run(ctx, "foo", *["x" * 60] * 10)
 
-    assert len(reply.message) < 400
+    # 60 + 60 bytes fit, then only 2 more bytes of the third argument, exactly like real Redis
+    assert reply.message == (
+        "ERR unknown command 'foo', with args beginning with: "
+        f"'{'x' * 60}' '{'x' * 60}' 'xx' "
+    )
+
+
+def test_unknown_command_name_is_cut_at_128_bytes(ctx):
+    reply = run(ctx, "n" * 500)
+
+    assert reply.message.startswith(f"ERR unknown command '{'n' * 128}', with")
 
 
 # ---- robustness -----------------------------------------------------------------------------

@@ -106,13 +106,17 @@ def execute(ctx: Context, words: list[bytes]) -> object:
 
 
 def _unknown_command(words: list[bytes]) -> RespError:
-    shown = ""
+    # Real Redis echoes at most 128 bytes of arguments in total: it keeps adding arguments while
+    # fewer than 128 bytes are shown, cutting the last one short. We copy that exactly.
+    shown = b""
     for arg in words[1:]:
-        if len(shown) >= 128:  # real Redis also stops echoing arguments after about 128 bytes
+        if len(shown) >= 128:
             break
-        shown += f"'{safe_text(arg)}' "
-    name = safe_text(words[0])
-    return RespError(f"ERR unknown command '{name}', with args beginning with: {shown}")
+        shown += b"'" + arg[: 128 - len(shown)] + b"' "
+    return RespError(
+        f"ERR unknown command '{safe_text(words[0][:128])}', "
+        f"with args beginning with: {safe_text(shown)}"
+    )
 
 
 # ---- connection and utility commands --------------------------------------------------------
@@ -187,3 +191,120 @@ def incrby(ctx: Context, args: list[bytes]) -> object:
     if amount is None:
         raise CommandError(NOT_AN_INTEGER)
     return _increment(ctx, args[0], amount)
+
+
+# ---- the handshake: what clients send when they connect (step 2.7) --------------------------
+
+SERVER_NAME = b"miniredis"
+SERVER_VERSION = b"0.1.0"
+BAD_NAME = "ERR Client names cannot contain spaces, newlines or special characters."
+
+
+def _is_plain_text(raw: bytes) -> bool:
+    """Client names and library info may only hold printable ASCII without spaces."""
+    return all(33 <= byte <= 126 for byte in raw)
+
+
+def _client_id(ctx: Context, args: list[bytes]) -> object:
+    return ctx.client.id
+
+
+def _client_setname(ctx: Context, args: list[bytes]) -> object:
+    if not _is_plain_text(args[0]):
+        raise CommandError(BAD_NAME)
+    ctx.client.name = args[0] or None  # an empty name clears it
+    return OK
+
+
+def _client_getname(ctx: Context, args: list[bytes]) -> object:
+    return ctx.client.name  # None becomes a RESP null
+
+
+def _client_setinfo(ctx: Context, args: list[bytes]) -> object:
+    attribute, value = args
+    kind = attribute.upper()
+    if kind not in (b"LIB-NAME", b"LIB-VER"):
+        raise CommandError(f"ERR Unrecognized option '{safe_text(attribute)}'")
+    if not _is_plain_text(value):
+        raise CommandError(
+            f"ERR {safe_text(attribute)} cannot contain spaces, newlines or special characters."
+        )
+    if kind == b"LIB-NAME":
+        ctx.client.lib_name = value or None
+    else:
+        ctx.client.lib_ver = value or None
+    return OK
+
+
+# subcommand -> (number of arguments after it, handler)
+_CLIENT_SUBCOMMANDS: dict[bytes, tuple[int, Handler]] = {
+    b"ID": (0, _client_id),
+    b"SETNAME": (1, _client_setname),
+    b"GETNAME": (0, _client_getname),
+    b"SETINFO": (2, _client_setinfo),
+}
+
+
+@command("client", -2)
+def client(ctx: Context, args: list[bytes]) -> object:
+    spec = _CLIENT_SUBCOMMANDS.get(args[0].upper())
+    if spec is None:
+        raise CommandError(f"ERR unknown subcommand '{safe_text(args[0])}'. Try CLIENT HELP.")
+    argument_count, handler = spec
+    if len(args) - 1 != argument_count:
+        raise wrong_arity(f"client|{args[0].decode('ascii').lower()}")
+    return handler(ctx, args[1:])
+
+
+@command("hello", -1)
+def hello(ctx: Context, args: list[bytes]) -> object:
+    """Pick a protocol version. MiniRedis only speaks RESP2, so only version 2 is accepted
+    (real Redis also accepts 3); clients that ask for 3 get the same NOPROTO error that real Redis
+    gives for versions it does not know, and can retry with 2."""
+    name: bytes | None = None
+    if args:
+        version = parse_int64(args[0])
+        if version is None:
+            raise CommandError("ERR Protocol version is not an integer or out of range")
+        if version != 2:
+            raise CommandError("NOPROTO unsupported protocol version")
+        position = 1
+        while position < len(args):
+            if args[position].upper() == b"SETNAME" and position + 1 < len(args):
+                if not _is_plain_text(args[position + 1]):
+                    raise CommandError(BAD_NAME)
+                name = args[position + 1]
+                position += 2
+            else:
+                option = safe_text(args[position])
+                raise CommandError(f"ERR Syntax error in HELLO option '{option}'")
+    if name is not None:  # only apply once every option has been checked
+        ctx.client.name = name or None
+    return [
+        b"server", SERVER_NAME,
+        b"version", SERVER_VERSION,
+        b"proto", 2,
+        b"id", ctx.client.id,
+        b"mode", b"standalone",
+        b"role", b"master",
+        b"modules", [],
+    ]  # fmt: skip
+
+
+@command("command", -1)
+def command_info(ctx: Context, args: list[bytes]) -> object:
+    """Real Redis lists every command here. MiniRedis answers just enough for clients that ask."""
+    if not args:
+        return []
+    subcommand = args[0].upper()
+    if subcommand == b"COUNT":
+        return len(COMMANDS)
+    if subcommand == b"DOCS":
+        return []
+    raise CommandError(f"ERR unknown subcommand '{safe_text(args[0])}'. Try COMMAND HELP.")
+
+
+@command("quit", -1)
+def quit_(ctx: Context, args: list[bytes]) -> object:
+    ctx.client.close_after_reply = True  # the server hangs up after sending this reply
+    return OK

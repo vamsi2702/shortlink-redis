@@ -113,3 +113,27 @@ def connect(server):
 @pytest.fixture
 def client(connect):
     return connect()
+
+
+REAL_REDIS_ADDRESS = ("127.0.0.1", 6379)
+
+
+@pytest.fixture
+def connect_real():
+    """connect_real() opens a client to the reference Redis (docker compose up -d redis).
+
+    The test is skipped if it is not running.
+    """
+    clients: list[RespClient] = []
+
+    def _connect() -> RespClient:
+        try:
+            client = RespClient(REAL_REDIS_ADDRESS, timeout=2)
+        except OSError:
+            pytest.skip("real Redis is not running on port 6379 (docker compose up -d redis)")
+        clients.append(client)
+        return client
+
+    yield _connect
+    for client in clients:
+        client.close()
