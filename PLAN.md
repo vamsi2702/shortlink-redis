@@ -177,7 +177,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** `redis-cli -p <port> set a 1` and `get a` work against your server.
 
 **2.6 More commands**
-- [ ] `DEL`, `EXISTS`, `INCR`, `INCRBY` (`redis-py` sends `INCRBY key 1` for `incr()`), plus error replies for unknown commands and wrong arguments, copied from [docs/RESP.md](docs/RESP.md)
+- [x] `DEL`, `EXISTS`, `INCR`, `INCRBY` (`redis-py` sends `INCRBY key 1` for `incr()`), plus error replies for unknown commands and wrong arguments, copied from [docs/RESP.md](docs/RESP.md)
 - **Done when:** each command has a test.
 
 **2.7 redis-py compatibility**

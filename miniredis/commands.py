@@ -9,6 +9,7 @@ cannot lose a count) without any locks. `test_commands_basic.py` checks that no 
 """
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -16,6 +17,12 @@ from miniredis.resp import OK, PONG, RespError
 from miniredis.store import Store
 
 log = logging.getLogger("miniredis.commands")
+
+INT64_MIN = -(2**63)
+INT64_MAX = 2**63 - 1
+# Redis is strict: no plus sign, no spaces, no leading zeros, and "-0" is not a number
+_INTEGER = re.compile(rb"0|-?[1-9][0-9]{0,18}")
+NOT_AN_INTEGER = "ERR value is not an integer or out of range"
 
 
 @dataclass
@@ -62,6 +69,14 @@ def command(name: str, arity: int) -> Callable[[Handler], Handler]:
         return handler
 
     return register
+
+
+def parse_int64(raw: bytes) -> int | None:
+    """The integer in `raw` if it is written exactly the way Redis accepts, else None."""
+    if not _INTEGER.fullmatch(raw):
+        return None
+    value = int(raw)
+    return value if INT64_MIN <= value <= INT64_MAX else None
 
 
 def safe_text(raw: bytes) -> str:
@@ -130,3 +145,45 @@ def set_(ctx: Context, args: list[bytes]) -> object:
 @command("get", 2)
 def get(ctx: Context, args: list[bytes]) -> object:
     return ctx.store.get(args[0])  # None becomes a RESP null
+
+
+@command("del", -2)
+def del_(ctx: Context, args: list[bytes]) -> object:
+    """Delete keys; the reply is how many actually existed (DEL a a counts a only once)."""
+    return sum(ctx.store.delete(key) for key in args)
+
+
+@command("exists", -2)
+def exists(ctx: Context, args: list[bytes]) -> object:
+    """How many of the keys exist; a key listed twice is counted twice."""
+    return sum(ctx.store.exists(key) for key in args)
+
+
+def _increment(ctx: Context, key: bytes, amount: int) -> int:
+    current = ctx.store.get(key)
+    if current is None:
+        value = 0  # a missing key counts as 0
+    else:
+        parsed = parse_int64(current)
+        if parsed is None:
+            raise CommandError(NOT_AN_INTEGER)
+        value = parsed
+    result = value + amount
+    if not INT64_MIN <= result <= INT64_MAX:
+        raise CommandError("ERR increment or decrement would overflow")
+    ctx.store.set(key, str(result).encode())
+    return result
+
+
+@command("incr", 2)
+def incr(ctx: Context, args: list[bytes]) -> object:
+    return _increment(ctx, args[0], 1)
+
+
+@command("incrby", 3)
+def incrby(ctx: Context, args: list[bytes]) -> object:
+    # redis-py sends INCRBY key 1 even for a plain incr() (found in step 2.3)
+    amount = parse_int64(args[1])
+    if amount is None:
+        raise CommandError(NOT_AN_INTEGER)
+    return _increment(ctx, args[0], amount)
