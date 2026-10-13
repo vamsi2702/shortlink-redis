@@ -187,7 +187,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 ### Phase 3 — MiniRedis features
 
 **3.1 Key expiry, lazy**
-- [ ] `EXPIRE`, `TTL`, `SET ... EX [NX]`; expired keys are removed when accessed
+- [x] `EXPIRE`, `TTL`, `SET ... EX [NX]`; expired keys are removed when accessed
 - **Done when:** a key with a 2-second TTL is gone after 3 seconds.
 
 **3.2 Key expiry, background**

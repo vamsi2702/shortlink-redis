@@ -10,6 +10,24 @@ from miniredis.server import start_server
 from miniredis.store import Store
 
 
+class FakeClock:
+    """A clock the test controls, in milliseconds since 1970."""
+
+    def __init__(self, start: int = 1_700_000_000_000) -> None:
+        self.now = start
+
+    def __call__(self) -> int:
+        return self.now
+
+    def advance(self, milliseconds: int) -> None:
+        self.now += milliseconds
+
+
+@pytest.fixture
+def clock() -> FakeClock:
+    return FakeClock()
+
+
 class ServerThread(threading.Thread):
     """Runs MiniRedis on its own event loop in a background thread, on a free port.
 

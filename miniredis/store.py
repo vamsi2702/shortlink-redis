@@ -1,26 +1,108 @@
 """The keyspace: one dictionary from key to value (the heart of MiniRedis).
 
-Keys and values are `bytes`, because Redis keys and values are binary safe. In Phase 3 values can
-also be lists and hashes, and keys can expire.
+Keys are `bytes`, because Redis keys are binary safe. Values are `bytes` (strings) here; lists
+and hashes are added in steps 3.3 and 3.4.
+
+Expiry: a second dictionary, `_expires`, maps a key to the moment it dies, as a unix time in
+milliseconds. Every access first checks whether that moment has passed and, if so, removes the key
+first ("lazy" expiry), so an expired key is never visible.
 """
+
+import time
+from collections.abc import Callable
+
+
+def now_ms() -> int:
+    return time.time_ns() // 1_000_000
 
 
 class Store:
-    def __init__(self) -> None:
-        self._data: dict[bytes, bytes] = {}
+    def __init__(self, clock: Callable[[], int] = now_ms) -> None:
+        self._clock = clock  # milliseconds since 1970; tests pass a fake one
+        self._data: dict[bytes, object] = {}
+        self._expires: dict[bytes, int] = {}  # key -> unix time (ms) when it dies
+        self.expired_keys = 0  # how many keys have died of old age
 
-    def get(self, key: bytes) -> bytes | None:
+    def now(self) -> int:
+        return self._clock()
+
+    # ---- reading and writing ---------------------------------------------------------------
+
+    def get(self, key: bytes) -> object | None:
+        """The value of a key, or None if it does not exist or has expired."""
+        if self._expire_if_due(key):
+            return None
         return self._data.get(key)
 
-    def set(self, key: bytes, value: bytes) -> None:
+    def set(
+        self,
+        key: bytes,
+        value: object,
+        *,
+        expire_at: int | None = None,
+        keep_ttl: bool = False,
+    ) -> None:
+        """Store a value. Without `expire_at` the key lives forever, unless `keep_ttl` keeps the
+        expiry it already had (INCR does that; a plain SET does not)."""
+        self._expire_if_due(key)  # an old, already-expired value must not lend its expiry
         self._data[key] = value
+        if expire_at is not None:
+            self._expires[key] = expire_at
+        elif not keep_ttl:
+            self._expires.pop(key, None)
 
     def delete(self, key: bytes) -> bool:
-        """Remove a key. Returns True if it existed."""
+        """Remove a key. Returns True if it existed (and had not already expired)."""
+        if self._expire_if_due(key):
+            return False
+        self._expires.pop(key, None)
         return self._data.pop(key, None) is not None
 
     def exists(self, key: bytes) -> bool:
-        return key in self._data
+        return self.get(key) is not None
+
+    # ---- expiry ----------------------------------------------------------------------------
+
+    def expire_at(self, key: bytes) -> int | None:
+        """When the key dies (unix ms), or None if it has no expiry or does not exist."""
+        if self._expire_if_due(key):
+            return None
+        return self._expires.get(key)
+
+    def set_expiry(self, key: bytes, at_ms: int) -> bool:
+        """Make an existing key die at `at_ms`. Returns False if the key does not exist."""
+        if not self.exists(key):
+            return False
+        self._expires[key] = at_ms
+        return True
+
+    def persist(self, key: bytes) -> bool:
+        """Remove a key's expiry. Returns True if it had one."""
+        if not self.exists(key):
+            return False
+        return self._expires.pop(key, None) is not None
+
+    def ttl_ms(self, key: bytes) -> int:
+        """Milliseconds left to live; -2 if the key does not exist, -1 if it never expires."""
+        if not self.exists(key):
+            return -2
+        at = self._expires.get(key)
+        return -1 if at is None else max(0, at - self._clock())
+
+    def _expire_if_due(self, key: bytes) -> bool:
+        """Remove the key if its time has come. Returns True if it did."""
+        at = self._expires.get(key)
+        if at is None or at > self._clock():
+            return False
+        del self._expires[key]
+        self._data.pop(key, None)
+        self.expired_keys += 1
+        return True
+
+    # ---- sizes -----------------------------------------------------------------------------
 
     def __len__(self) -> int:
         return len(self._data)
+
+    def expiring_count(self) -> int:
+        return len(self._expires)

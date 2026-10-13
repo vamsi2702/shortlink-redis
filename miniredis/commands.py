@@ -23,6 +23,7 @@ INT64_MAX = 2**63 - 1
 # Redis is strict: no plus sign, no spaces, no leading zeros, and "-0" is not a number
 _INTEGER = re.compile(rb"0|-?[1-9][0-9]{0,18}")
 NOT_AN_INTEGER = "ERR value is not an integer or out of range"
+WRONGTYPE = "WRONGTYPE Operation against a key holding the wrong kind of value"
 
 
 @dataclass
@@ -137,18 +138,94 @@ def echo(ctx: Context, args: list[bytes]) -> object:
 # ---- strings --------------------------------------------------------------------------------
 
 
+def get_string(ctx: Context, key: bytes) -> bytes | None:
+    """The string stored at `key`, None if there is none, or a WRONGTYPE error for other types."""
+    value = ctx.store.get(key)
+    if value is not None and not isinstance(value, bytes):
+        raise CommandError(WRONGTYPE)
+    return value
+
+
+# SET option -> (milliseconds per unit, is it an absolute time of day?)
+_EXPIRY_OPTIONS = {
+    b"EX": (1000, False),
+    b"PX": (1, False),
+    b"EXAT": (1000, True),
+    b"PXAT": (1, True),
+}
+
+
+def expiry_time(ctx: Context, amount: int, unit_ms: int, absolute: bool, command_name: str) -> int:
+    """Turn an amount of seconds or milliseconds into a unix time in ms, refusing nonsense."""
+    invalid = CommandError(f"ERR invalid expire time in '{command_name}' command")
+    if command_name == "set" and amount <= 0:
+        raise invalid  # SET refuses zero and negative times; EXPIRE accepts them (they delete)
+    if amount > INT64_MAX // unit_ms or amount < INT64_MIN // unit_ms:
+        raise invalid
+    when = amount * unit_ms
+    if not absolute:
+        when += ctx.store.now()
+    if when > INT64_MAX:
+        raise invalid
+    return when
+
+
+@dataclass
+class SetOptions:
+    nx: bool = False
+    xx: bool = False
+    keep_ttl: bool = False
+    expire_at: int | None = None
+
+
+def parse_set_options(ctx: Context, args: list[bytes]) -> SetOptions:
+    """NX | XX, KEEPTTL, and one of EX | PX | EXAT | PXAT, with the same conflicts Redis has."""
+    options = SetOptions()
+    seen: set[bytes] = set()  # which expiry options appeared
+    i = 0
+    while i < len(args):
+        option = args[i].upper()
+        has_value = i + 1 < len(args)
+        if option == b"NX" and not options.xx:
+            options.nx = True
+        elif option == b"XX" and not options.nx:
+            options.xx = True
+        elif option == b"KEEPTTL" and not seen:
+            options.keep_ttl = True
+        elif option in _EXPIRY_OPTIONS and has_value and not options.keep_ttl and not (
+            seen - {option}
+        ):
+            amount = parse_int64(args[i + 1])
+            if amount is None:
+                raise CommandError(NOT_AN_INTEGER)
+            unit_ms, absolute = _EXPIRY_OPTIONS[option]
+            options.expire_at = expiry_time(ctx, amount, unit_ms, absolute, "set")
+            seen.add(option)
+            i += 1
+        else:
+            raise CommandError("ERR syntax error")
+        i += 1
+    return options
+
+
 @command("set", -3)
 def set_(ctx: Context, args: list[bytes]) -> object:
-    if len(args) > 2:
-        # SET options (EX, NX, ...) arrive in step 3.1
-        raise CommandError("ERR syntax error")
-    ctx.store.set(args[0], args[1])
+    key, value = args[0], args[1]
+    options = parse_set_options(ctx, args[2:])
+    store = ctx.store
+    exists = store.exists(key)
+    if (options.nx and exists) or (options.xx and not exists):
+        return None  # the condition failed: nothing is changed and the reply is a null
+    if options.expire_at is not None and options.expire_at <= store.now():
+        store.delete(key)  # an expiry in the past means the key is gone straight away
+        return OK
+    store.set(key, value, expire_at=options.expire_at, keep_ttl=options.keep_ttl)
     return OK
 
 
 @command("get", 2)
 def get(ctx: Context, args: list[bytes]) -> object:
-    return ctx.store.get(args[0])  # None becomes a RESP null
+    return get_string(ctx, args[0])  # None becomes a RESP null
 
 
 @command("del", -2)
@@ -164,7 +241,7 @@ def exists(ctx: Context, args: list[bytes]) -> object:
 
 
 def _increment(ctx: Context, key: bytes, amount: int) -> int:
-    current = ctx.store.get(key)
+    current = get_string(ctx, key)
     if current is None:
         value = 0  # a missing key counts as 0
     else:
@@ -175,7 +252,7 @@ def _increment(ctx: Context, key: bytes, amount: int) -> int:
     result = value + amount
     if not INT64_MIN <= result <= INT64_MAX:
         raise CommandError("ERR increment or decrement would overflow")
-    ctx.store.set(key, str(result).encode())
+    ctx.store.set(key, str(result).encode(), keep_ttl=True)  # counting does not reset the expiry
     return result
 
 
@@ -191,6 +268,81 @@ def incrby(ctx: Context, args: list[bytes]) -> object:
     if amount is None:
         raise CommandError(NOT_AN_INTEGER)
     return _increment(ctx, args[0], amount)
+
+
+# ---- expiry (step 3.1) ------------------------------------------------------------------------
+
+
+def _expire_command(
+    ctx: Context, args: list[bytes], name: str, unit_ms: int, absolute: bool
+) -> object:
+    key = args[0]
+    amount = parse_int64(args[1])
+    if amount is None:
+        raise CommandError(NOT_AN_INTEGER)
+    nx = xx = gt = lt = False
+    for raw in args[2:]:
+        option = raw.upper()
+        if option == b"NX":
+            nx = True
+        elif option == b"XX":
+            xx = True
+        elif option == b"GT":
+            gt = True
+        elif option == b"LT":
+            lt = True
+        else:
+            raise CommandError(f"ERR Unsupported option {safe_text(raw)}")
+    if nx and (xx or gt or lt):
+        raise CommandError("ERR NX and XX, GT or LT options at the same time are not compatible")
+    if gt and lt:
+        raise CommandError("ERR GT and LT options at the same time are not compatible")
+
+    when = expiry_time(ctx, amount, unit_ms, absolute, name)
+    store = ctx.store
+    if not store.exists(key):
+        return 0
+    current = store.expire_at(key)
+    if (nx and current is not None) or (xx and current is None):
+        return 0
+    if gt and (current is None or when <= current):  # no expiry counts as "infinitely far away"
+        return 0
+    if lt and current is not None and when >= current:
+        return 0
+    if when <= store.now():
+        store.delete(key)  # a time in the past (or EXPIRE 0) deletes the key
+        return 1
+    store.set_expiry(key, when)
+    return 1
+
+
+def _register_expire_command(name: str, unit_ms: int, absolute: bool) -> None:
+    @command(name, -3)
+    def handler(ctx: Context, args: list[bytes]) -> object:
+        return _expire_command(ctx, args, name, unit_ms, absolute)
+
+
+_register_expire_command("expire", 1000, absolute=False)
+_register_expire_command("pexpire", 1, absolute=False)
+_register_expire_command("expireat", 1000, absolute=True)
+_register_expire_command("pexpireat", 1, absolute=True)
+
+
+@command("ttl", 2)
+def ttl(ctx: Context, args: list[bytes]) -> object:
+    """Seconds left (rounded to the nearest second); -2 no such key, -1 never expires."""
+    remaining = ctx.store.ttl_ms(args[0])
+    return remaining if remaining < 0 else (remaining + 500) // 1000
+
+
+@command("pttl", 2)
+def pttl(ctx: Context, args: list[bytes]) -> object:
+    return ctx.store.ttl_ms(args[0])
+
+
+@command("persist", 2)
+def persist(ctx: Context, args: list[bytes]) -> object:
+    return 1 if ctx.store.persist(args[0]) else 0
 
 
 # ---- the handshake: what clients send when they connect (step 2.7) --------------------------

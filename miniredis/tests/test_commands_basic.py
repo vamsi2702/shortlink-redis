@@ -94,8 +94,8 @@ def test_keys_are_case_sensitive(ctx):
     assert run(ctx, "GET", "key") is None
 
 
-def test_set_with_options_is_not_supported_yet(ctx):
-    assert error_text(run(ctx, "SET", "a", "1", "EX", "10")) == "ERR syntax error"
+def test_set_with_the_get_option_is_not_supported(ctx):
+    assert error_text(run(ctx, "SET", "a", "1", "GET")) == "ERR syntax error"
     assert run(ctx, "GET", "a") is None  # and nothing was stored
 
 

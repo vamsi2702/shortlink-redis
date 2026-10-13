@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -108,6 +109,17 @@ def test_fifty_clients_at_once(connect):
     for i, c in enumerate(clients):
         c.send_raw(encode_command("GET", f"key{i}"))
     assert [c.read() for c in clients] == [f"value{i}".encode() for i in range(50)]
+
+
+def test_a_key_really_expires_after_its_time_in_real_time(client):
+    client.call("SET", "short-lived", "v", "PX", 150)
+    assert client.call("GET", "short-lived") == b"v"
+    assert 0 < client.call("PTTL", "short-lived") <= 150
+
+    time.sleep(0.4)
+
+    assert client.call("GET", "short-lived") is None
+    assert client.call("TTL", "short-lived") == -2
 
 
 def test_a_slow_client_does_not_block_the_others(connect):
