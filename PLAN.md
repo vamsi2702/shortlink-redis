@@ -200,7 +200,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** a producer and a consumer can share a queue.
 
 **3.4 Hashes**
-- [ ] `HSET`, `HGET`
+- [x] `HSET`, `HGET`
 - **Done when:** tests pass.
 
 **3.5 AOF write**

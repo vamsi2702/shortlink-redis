@@ -367,6 +367,54 @@ def lrange(ctx: Context, args: list[bytes]) -> object:
     return list(islice(items, start, min(stop, size - 1) + 1))
 
 
+# ---- hashes (step 3.4) ------------------------------------------------------------------------
+
+
+def get_hash(ctx: Context, key: bytes, *, create: bool = False) -> dict[bytes, bytes] | None:
+    """The hash at `key`, None if there is none (or a new empty one with create=True), or a
+    WRONGTYPE error if the key holds something else."""
+    value = ctx.store.get(key)
+    if value is None:
+        if not create:
+            return None
+        value = {}
+        ctx.store.set(key, value)
+        return value
+    if not isinstance(value, dict):
+        raise CommandError(WRONGTYPE)
+    return value
+
+
+@command("hset", -4)
+def hset(ctx: Context, args: list[bytes]) -> object:
+    """Set one or more fields. The reply is how many fields are NEW (updates do not count)."""
+    if len(args) % 2 == 0:  # the key, then field/value pairs: the count must be odd
+        raise wrong_arity("hset")
+    fields = get_hash(ctx, args[0], create=True)
+    assert fields is not None
+    added = 0
+    for i in range(1, len(args), 2):
+        if args[i] not in fields:
+            added += 1
+        fields[args[i]] = args[i + 1]
+    return added
+
+
+@command("hget", 3)
+def hget(ctx: Context, args: list[bytes]) -> object:
+    fields = get_hash(ctx, args[0])
+    return None if fields is None else fields.get(args[1])
+
+
+@command("hgetall", 2)
+def hgetall(ctx: Context, args: list[bytes]) -> object:
+    """Every field and value as one flat list: field, value, field, value, ..."""
+    fields = get_hash(ctx, args[0])
+    if fields is None:
+        return []
+    return [item for pair in fields.items() for item in pair]
+
+
 # ---- expiry (step 3.1) ------------------------------------------------------------------------
 
 
