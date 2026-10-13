@@ -16,7 +16,8 @@ from pathlib import Path
 
 from miniredis import commands
 from miniredis.aof import FSYNC_POLICIES, AppendOnlyFile, ReplayResult, replay
-from miniredis.commands import ClientState, Context, Stats
+from miniredis.commands import ClientState, Context, Replies, Stats
+from miniredis.pubsub import PubSub
 from miniredis.resp import Parser, ProtocolError, RespError, encode
 from miniredis.store import Store
 
@@ -24,6 +25,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 6380  # next to Redis's 6379, so both can run side by side
 DEFAULT_AOF_PATH = "data/miniredis.aof"
 RECV_SIZE = 65536
+MAX_PUSH_BUFFER = 32 * 1024 * 1024  # unsent published messages a client may fall behind by
 EXPIRE_INTERVAL = 0.1  # seconds between runs of the expiry cleaner
 EXPIRE_BATCH = 1000  # heap entries the cleaner looks at per run
 AOF_SYNC_INTERVAL = 1.0  # seconds between fsyncs with the "everysec" policy
@@ -47,6 +49,8 @@ def run_message(ctx: Context, message: object) -> object:
 
 def encode_reply(reply: object) -> bytes:
     try:
+        if isinstance(reply, Replies):  # several separate answers to one command
+            return b"".join(encode(part) for part in reply)
         return encode(reply)
     except (ValueError, TypeError):  # a handler returned something RESP cannot represent
         log.exception("could not encode reply %r", reply)
@@ -64,7 +68,21 @@ async def handle_client(
         stats=server.stats,
         extra_info=server.extra_info,
         rewrite_aof=server.rewrite_aof if server.aof is not None else None,
+        pubsub=server.pubsub,
     )
+
+    def push(data: bytes) -> bool:
+        """Send a published message to this client, even though it is waiting for input. A
+        client that does not read what it is sent would make the server's memory grow without
+        limit, so one that falls too far behind is disconnected (real Redis does the same)."""
+        if writer.transport.get_write_buffer_size() > MAX_PUSH_BUFFER:
+            log.warning("client %d cannot keep up with its messages; disconnecting", ctx.client.id)
+            writer.transport.abort()
+            return False
+        writer.write(data)
+        return True
+
+    ctx.client.push = push
     parser = Parser(allow_inline=True)
     log.info("client %d connected: %s", ctx.client.id, peer)
     server.stats.connections_received += 1
@@ -94,6 +112,8 @@ async def handle_client(
     except ConnectionError as exc:  # reset by the peer
         log.info("client %d error: %s", ctx.client.id, exc)
     finally:
+        ctx.client.push = None
+        server.pubsub.unsubscribe_all(ctx.client)  # a client that left stops receiving messages
         server.stats.connected_clients -= 1
         writer.close()
         try:
@@ -131,6 +151,7 @@ class MiniRedisServer:
         self._auto_rewrite_percentage = auto_rewrite_percentage
         self.aof_load: ReplayResult | None = None  # what replaying the file found, once started
         self.stats = Stats()
+        self.pubsub = PubSub()
         self._expire_interval = expire_interval
         self._server: asyncio.Server | None = None
         self._expire_task: asyncio.Task[None] | None = None

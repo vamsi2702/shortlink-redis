@@ -18,6 +18,7 @@ from itertools import islice
 from typing import Protocol
 
 from miniredis.info import render as render_info
+from miniredis.pubsub import PubSub
 from miniredis.resp import NULL_ARRAY, OK, PONG, RespError, SimpleString
 from miniredis.store import Store
 
@@ -31,7 +32,7 @@ NOT_AN_INTEGER = "ERR value is not an integer or out of range"
 WRONGTYPE = "WRONGTYPE Operation against a key holding the wrong kind of value"
 
 
-@dataclass
+@dataclass(eq=False)  # eq=False: two clients are the same only if they are the very same object
 class ClientState:
     """What the server remembers about one connected client."""
 
@@ -40,6 +41,14 @@ class ClientState:
     lib_name: bytes | None = None
     lib_ver: bytes | None = None
     close_after_reply: bool = False
+    subscriptions: dict[bytes, None] = field(default_factory=dict)  # channels (step 3.10)
+    # sends bytes to this client out of turn, for published messages; set by the server
+    push: Callable[[bytes], bool] | None = None
+
+
+class Replies(list):
+    """A handler returns this when the answer to ONE command is SEVERAL separate RESP messages,
+    as SUBSCRIBE does (one confirmation per channel). Each item is encoded on its own."""
 
 
 class ChangeLog(Protocol):
@@ -72,6 +81,7 @@ class Context:
     extra_info: Callable[[], dict[str, dict[str, object]]] | None = None
     # Rewrites the append-only file (None if there is no file). Set by the server.
     rewrite_aof: Callable[[], None] | None = None
+    pubsub: PubSub = field(default_factory=PubSub)  # shared by all clients (step 3.10)
 
     def propagate(self, *words: object) -> None:
         """Record a change in the append-only file, if there is one.
@@ -97,6 +107,9 @@ class Command:
 
 
 COMMANDS: dict[bytes, Command] = {}
+
+# A client that has subscribed to a channel is listening: only these commands are allowed then.
+_ALLOWED_WHEN_SUBSCRIBED = {"subscribe", "unsubscribe", "ping", "quit"}
 
 
 def command(name: str, arity: int) -> Callable[[Handler], Handler]:
@@ -142,6 +155,11 @@ def execute(ctx: Context, words: list[bytes]) -> object:
     count = len(words)
     if (spec.arity >= 0 and count != spec.arity) or (spec.arity < 0 and count < -spec.arity):
         return RespError(str(wrong_arity(spec.name)))
+    if ctx.client.subscriptions and spec.name not in _ALLOWED_WHEN_SUBSCRIBED:
+        return RespError(
+            f"ERR Can't execute '{spec.name}': only (P|S)SUBSCRIBE / (P|S)UNSUBSCRIBE / "
+            "PING / QUIT / RESET are allowed in this context"
+        )
     try:
         return spec.handler(ctx, words[1:])
     except CommandError as exc:
@@ -174,6 +192,8 @@ def _unknown_command(words: list[bytes]) -> RespError:
 def ping(ctx: Context, args: list[bytes]) -> object:
     if len(args) > 1:
         raise wrong_arity("ping")
+    if ctx.client.subscriptions:  # a subscribed client gets an array, so it can tell it apart
+        return [b"pong", args[0] if args else b""]
     return args[0] if args else PONG
 
 
@@ -690,6 +710,38 @@ def command_info(ctx: Context, args: list[bytes]) -> object:
 def info_(ctx: Context, args: list[bytes]) -> object:
     """A report on the server. Takes the time of one pass over all keys (for the memory figure)."""
     return render_info(ctx, [arg.decode("utf-8", "replace") for arg in args]).encode()
+
+
+# ---- publish and subscribe (step 3.10) --------------------------------------------------------
+
+
+@command("subscribe", -2)
+def subscribe(ctx: Context, args: list[bytes]) -> object:
+    """Listen to channels. One confirmation per channel: [subscribe, channel, how many now]."""
+    replies = Replies()
+    for channel in args:
+        count = ctx.pubsub.subscribe(ctx.client, channel)
+        replies.append([b"subscribe", channel, count])
+    return replies
+
+
+@command("unsubscribe", -1)
+def unsubscribe(ctx: Context, args: list[bytes]) -> object:
+    """Stop listening: to the named channels, or to all of them when none are named."""
+    channels = args or list(ctx.client.subscriptions)
+    if not channels:
+        return Replies([[b"unsubscribe", None, 0]])  # real Redis answers like this too
+    replies = Replies()
+    for channel in channels:
+        count = ctx.pubsub.unsubscribe(ctx.client, channel)
+        replies.append([b"unsubscribe", channel, count])
+    return replies
+
+
+@command("publish", 3)
+def publish(ctx: Context, args: list[bytes]) -> object:
+    """Send a message to a channel. The reply is how many clients received it."""
+    return ctx.pubsub.publish(args[0], args[1])
 
 
 @command("bgrewriteaof", 1)

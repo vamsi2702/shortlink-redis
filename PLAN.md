@@ -225,7 +225,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** the file shrinks and replay still gives the same data.
 
 **3.10 (Optional) Pub/Sub**
-- [ ] `SUBSCRIBE`, `PUBLISH`
+- [x] `SUBSCRIBE`, `PUBLISH`
 - **Done when:** two subscribers both receive a published message. *(First thing to cut if you are behind.)*
 
 ### Phase 4 — Integrate

@@ -47,7 +47,10 @@ def _facts(name: str, ctx: "Context") -> dict[str, object]:
             "uptime_in_days": uptime // 86400,
         }
     if name == "clients":
-        return {"connected_clients": stats.connected_clients}
+        return {
+            "connected_clients": stats.connected_clients,
+            "pubsub_clients": ctx.pubsub.subscriber_count,
+        }
     if name == "memory":
         used = store.memory_estimate()
         return {"used_memory": used, "used_memory_human": human_bytes(used)}
@@ -60,6 +63,7 @@ def _facts(name: str, ctx: "Context") -> dict[str, object]:
             "expired_keys": store.expired_keys,
             "keyspace_hits": stats.keyspace_hits,
             "keyspace_misses": stats.keyspace_misses,
+            "pubsub_channels": ctx.pubsub.channel_count,
         }
     if name == "keyspace" and len(store) > 0:
         summary = f"keys={len(store)},expires={store.expiring_count()}"
