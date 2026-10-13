@@ -168,8 +168,8 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** you can write out by hand what `SET a 1` looks like on the wire.
 
 **2.4 RESP parser and encoder**
-- [ ] `resp.py` parses and encodes all five types
-- [ ] Unit tests, including partial data and split packets
+- [x] `resp.py` parses and encodes all five types
+- [x] Unit tests, including partial data and split packets
 - **Done when:** the tests pass, including a message that arrives in two pieces.
 
 **2.5 First commands**

@@ -10,16 +10,14 @@ A learning tool for step 2.3. Point it at real Redis (port 6379) now, at MiniRed
 import argparse
 import socket
 
+from miniredis.resp import encode_command
+
 REDIS_PORT = 6379
 
 
 def command_to_resp(args: list[str]) -> bytes:
     """Encode a command the way clients send it: an array of bulk strings."""
-    parts = [f"*{len(args)}\r\n".encode()]
-    for arg in args:
-        data = arg.encode()  # lengths count BYTES, so "é" is 2
-        parts.append(b"$%d\r\n%s\r\n" % (len(data), data))
-    return b"".join(parts)
+    return encode_command(*args)
 
 
 def unescape(text: str) -> bytes:
