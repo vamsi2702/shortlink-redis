@@ -200,6 +200,10 @@ class Parser:
     def __init__(self, *, allow_inline: bool = False) -> None:
         self._buf = bytearray()
         self._pos = 0  # start of the unread part of the buffer
+        self._base = 0  # how many bytes have been dropped from the front of the buffer so far
+        # Where the last complete message ended, counted in bytes from the very first byte ever
+        # fed. Replaying a file uses it to know exactly how much of the file is good.
+        self.complete_offset = 0
         self._allow_inline = allow_inline
         # A top-level array is read one element at a time and remembered between calls, so a
         # huge command arriving in small pieces is parsed in linear time, not over and over.
@@ -232,7 +236,13 @@ class Parser:
                 yield message[0]
         finally:
             del self._buf[: self._pos]  # drop what was consumed, once, instead of per message
+            self._base += self._pos
             self._pos = 0
+
+    def _done(self, value: object) -> tuple[object]:
+        """Finish a message: remember where it ended and wrap it for `_next_message`."""
+        self.complete_offset = self._base + self._pos
+        return (value,)
 
     def _next_message(self) -> tuple[object] | None:
         """The next complete message as a 1-tuple (so a null message is distinguishable), or
@@ -248,7 +258,7 @@ class Parser:
                 self._remaining -= 1
                 if self._remaining == 0:
                     items, self._items = self._items, None
-                    return (items,)
+                    return self._done(items)
                 continue
 
             if self._pos >= len(buf):
@@ -262,9 +272,9 @@ class Parser:
                 text, self._pos = line
                 n = _length(text, MAX_ARRAY_LENGTH, "array length")
                 if n == -1:
-                    return (None,)
+                    return self._done(None)
                 if n == 0:
-                    return ([],)
+                    return self._done([])
                 self._items, self._remaining = [], n
                 continue
 
@@ -273,7 +283,7 @@ class Parser:
                 if result is None:
                     return None
                 value, self._pos = result
-                return (value,)
+                return self._done(value)
 
             if not self._allow_inline:
                 raise ProtocolError(f"unknown type byte {bytes([first])!r}")
@@ -287,7 +297,7 @@ class Parser:
             words = bytes(buf[self._pos : newline]).split()
             self._pos = newline + 1
             if words:
-                return (words,)
+                return self._done(words)
             # an empty line is ignored
 
 

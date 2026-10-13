@@ -11,9 +11,11 @@ has been told succeeded is in the file.
 
 import logging
 import os
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
-from miniredis.resp import encode_command
+from miniredis.resp import Parser, ProtocolError, RespError, encode_command
 
 log = logging.getLogger("miniredis.aof")
 
@@ -23,6 +25,100 @@ log = logging.getLogger("miniredis.aof")
 #             second of changes; a crash of MiniRedis itself loses nothing
 #   no        never; the operating system decides
 FSYNC_POLICIES = ("always", "everysec", "no")
+
+
+@dataclass
+class ReplayResult:
+    """What happened when the file was replayed."""
+
+    commands: int = 0  # commands replayed
+    errors: int = 0  # commands that were replayed but answered with an error (and were skipped)
+    valid_bytes: int = 0  # how much of the start of the file was good
+    discarded_bytes: int = 0  # how much of the end was thrown away (and saved, see `replay`)
+    reason: str | None = None  # why the end was thrown away, if it was
+
+
+def _is_command(message: object) -> bool:
+    return (
+        isinstance(message, list)
+        and len(message) > 0
+        and all(isinstance(word, bytes) for word in message)
+    )
+
+
+def replay(
+    path: str | Path, apply: Callable[[list[bytes]], object], chunk_size: int = 1 << 20
+) -> ReplayResult:
+    """Run every command in the file through `apply`, in order, to rebuild the data.
+
+    A log can end badly: the machine lost power or the process was killed in the middle of a
+    write, so the last command is only partly there, or the disk damaged some bytes. The commands
+    before the damage are good, so they are used, and everything from the first bad byte on is
+    cut off: it is copied to "<file>.discarded" first (nothing is lost silently), then the file is
+    truncated there, so that new commands are appended after good data, not after garbage."""
+    path = Path(path)
+    result = ReplayResult()
+    if not path.exists():
+        return result
+    size = path.stat().st_size
+    parser = Parser()
+    good_end = 0  # offset just past the last command that was replayed
+    reason: str | None = None
+    try:
+        with open(path, "rb") as file:
+            while chunk := file.read(chunk_size):
+                parser.feed(chunk)
+                for message in parser.messages():
+                    if not _is_command(message):
+                        reason = "something that is not a command"
+                        break
+                    reply = apply(message)  # type: ignore[arg-type]
+                    result.commands += 1
+                    if isinstance(reply, RespError):
+                        result.errors += 1
+                        if result.errors <= 10:
+                            log.warning("replaying %r failed: %s", message[:3], reply.message)
+                    good_end = parser.complete_offset
+                if reason is not None:
+                    break
+    except ProtocolError as exc:
+        reason = f"invalid data ({exc})"
+    if reason is None and parser.pending:
+        reason = "a command cut off at the end of the file"
+
+    result.valid_bytes = good_end
+    result.discarded_bytes = size - good_end
+    if result.discarded_bytes > 0:
+        result.reason = reason or "unknown"
+        _cut_off_the_end(path, good_end)
+        log.warning(
+            "%s: discarded the last %d bytes after offset %d (%s); they were saved in %s",
+            path,
+            result.discarded_bytes,
+            good_end,
+            result.reason,
+            _discarded_path(path),
+        )
+    return result
+
+
+def _discarded_path(path: Path) -> Path:
+    return path.with_name(path.name + ".discarded")
+
+
+def _cut_off_the_end(path: Path, good_end: int) -> None:
+    """Save the bytes after `good_end` aside, then truncate the file there."""
+    with open(path, "rb") as file:
+        file.seek(good_end)
+        tail = file.read()
+    with open(_discarded_path(path), "ab") as saved:
+        saved.write(tail)
+        saved.flush()
+        os.fsync(saved.fileno())  # the copy is safe before the original is cut
+    with open(path, "r+b") as file:
+        file.truncate(good_end)
+        file.flush()
+        os.fsync(file.fileno())
 
 
 class AppendOnlyFile:

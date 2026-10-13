@@ -15,7 +15,7 @@ import logging
 from pathlib import Path
 
 from miniredis import commands
-from miniredis.aof import FSYNC_POLICIES, AppendOnlyFile
+from miniredis.aof import FSYNC_POLICIES, AppendOnlyFile, ReplayResult, replay
 from miniredis.commands import ClientState, Context
 from miniredis.resp import Parser, ProtocolError, RespError, encode
 from miniredis.store import Store
@@ -111,15 +111,34 @@ class MiniRedisServer:
         self.aof: AppendOnlyFile | None = None
         if aof_path is not None:
             self.aof = AppendOnlyFile(aof_path, appendfsync)
+        self.aof_load: ReplayResult | None = None  # what replaying the file found, once started
         self._expire_interval = expire_interval
         self._server: asyncio.Server | None = None
         self._expire_task: asyncio.Task[None] | None = None
         self._aof_task: asyncio.Task[None] | None = None
         self._stopping = asyncio.Event()
 
+    def load_aof(self) -> ReplayResult:
+        """Rebuild the data from the append-only file. Runs before any client is accepted."""
+        assert self.aof is not None
+        replay_context = Context(store=self.store, client=ClientState(id=0))  # not logged again
+        self.store.loading = True  # nothing expires and past times are only remembered
+        try:
+            result = replay(self.aof.path, lambda words: commands.execute(replay_context, words))
+        finally:
+            self.store.loading = False
+        log.info(
+            "loaded %d commands from %s (%d keys)", result.commands, self.aof.path, len(self.store)
+        )
+        return result
+
     async def start(self) -> None:
         if self.aof is not None:
+            self.aof_load = self.load_aof()
             self.aof.open()
+            aof = self.aof
+            # a key that dies of old age is deleted in the log too, at that moment
+            self.store.on_expire = lambda key: aof.append([b"DEL", key])
         self._server = await asyncio.start_server(self._on_connect, self.host, self.port)
         self._expire_task = asyncio.create_task(self._expire_loop())
         if self.aof is not None and self.aof.fsync_policy == "everysec":
@@ -157,6 +176,8 @@ class MiniRedisServer:
         while True:
             try:
                 self.store.purge_expired(limit=EXPIRE_BATCH)
+                if self.aof is not None:
+                    self.aof.commit()  # the DELs written for the keys that just died
                 # more keys are already due: let the clients have a turn, then carry on at once
                 pause = 0 if self.store.has_due_expiry() else self._expire_interval
             except Exception:  # the cleaner must never die, whatever happens

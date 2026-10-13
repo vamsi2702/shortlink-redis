@@ -209,7 +209,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** the file grows as you send writes.
 
 **3.6 AOF replay**
-- [ ] Replay the log on startup
+- [x] Replay the log on startup
 - **Done when:** data survives a restart, and expired keys stay expired.
 
 **3.7 Crash safety**

@@ -10,7 +10,7 @@ first ("lazy" expiry), so an expired key is never visible.
 
 import heapq
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 
 
 def now_ms() -> int:
@@ -27,6 +27,14 @@ class Store:
         # different expiry; `_expires` is the truth, and stale entries are skipped when popped.
         self._heap: list[tuple[int, bytes]] = []
         self.expired_keys = 0  # how many keys have died of old age
+        # Called with the key whenever a key dies of old age. The server uses it to write a DEL
+        # to the append-only file, so that a replay deletes the key at the same point in the
+        # sequence of events.
+        self.on_expire: Callable[[bytes], None] | None = None
+        # True while the append-only file is being replayed. Then nothing expires and times in
+        # the past are simply remembered: a key that was alive when a command ran must still be
+        # alive when that command is replayed, even though its time has long passed.
+        self.loading = False
 
     def now(self) -> int:
         return self._clock()
@@ -109,14 +117,14 @@ class Store:
         keys it removed."""
         removed = 0
         now = self._clock()
+        if self.loading:
+            return 0
         for _ in range(limit):
             if not self._heap or self._heap[0][0] > now:
                 break
             at, key = heapq.heappop(self._heap)
             if self._expires.get(key) == at:  # otherwise the entry is stale: skip it
-                del self._expires[key]
-                self._data.pop(key, None)
-                self.expired_keys += 1
+                self._kill(key)
                 removed += 1
         return removed
 
@@ -127,12 +135,28 @@ class Store:
     def _expire_if_due(self, key: bytes) -> bool:
         """Remove the key if its time has come. Returns True if it did."""
         at = self._expires.get(key)
-        if at is None or at > self._clock():
+        if self.loading or at is None or at > self._clock():
             return False
+        self._kill(key)
+        return True
+
+    def _kill(self, key: bytes) -> None:
+        """Remove a key whose time has come, and tell whoever is listening."""
         del self._expires[key]
         self._data.pop(key, None)
         self.expired_keys += 1
-        return True
+        if self.on_expire is not None:
+            self.on_expire(key)
+
+    def items(self) -> Iterator[tuple[bytes, object, int | None]]:
+        """Every live key as (key, value, dies-at or None). Do not change the store while
+        looping over this."""
+        now = self._clock()
+        for key, value in self._data.items():
+            at = self._expires.get(key)
+            if at is not None and at <= now:
+                continue  # dead, just not removed yet
+            yield key, value, at
 
     # ---- sizes -----------------------------------------------------------------------------
 

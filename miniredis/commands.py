@@ -234,7 +234,8 @@ def set_(ctx: Context, args: list[bytes]) -> object:
     exists = store.exists(key)
     if (options.nx and exists) or (options.xx and not exists):
         return None  # the condition failed: nothing is changed and the reply is a null
-    if options.expire_at is not None and options.expire_at <= store.now():
+    in_the_past = options.expire_at is not None and options.expire_at <= store.now()
+    if in_the_past and not store.loading:
         if store.delete(key):  # an expiry in the past means the key is gone straight away
             ctx.propagate(b"DEL", key)
         return OK
@@ -488,7 +489,7 @@ def _expire_command(
         return 0
     if lt and current is not None and when >= current:
         return 0
-    if when <= store.now():
+    if when <= store.now() and not store.loading:
         store.delete(key)  # a time in the past (or EXPIRE 0) deletes the key
         ctx.propagate(b"DEL", key)
         return 1
