@@ -20,6 +20,8 @@ from miniredis.store import Store
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 6380  # next to Redis's 6379, so both can run side by side
 RECV_SIZE = 65536
+EXPIRE_INTERVAL = 0.1  # seconds between runs of the expiry cleaner
+EXPIRE_BATCH = 1000  # heap entries the cleaner looks at per run
 
 log = logging.getLogger("miniredis.server")
 
@@ -80,23 +82,81 @@ async def handle_client(
         log.info("client %d disconnected", ctx.client.id)
 
 
+class MiniRedisServer:
+    """Everything one running MiniRedis consists of: the listening socket, the shared store, and
+    the background tasks that work next to the clients on the same event loop."""
+
+    def __init__(
+        self,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        *,
+        store: Store | None = None,
+        expire_interval: float = EXPIRE_INTERVAL,
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.store = store if store is not None else Store()
+        self._expire_interval = expire_interval
+        self._server: asyncio.Server | None = None
+        self._tasks: list[asyncio.Task[None]] = []
+
+    async def start(self) -> None:
+        self._server = await asyncio.start_server(self._on_connect, self.host, self.port)
+        self._tasks.append(asyncio.create_task(self._expire_loop()))
+
+    @property
+    def address(self) -> tuple[str, int]:
+        """The (host, port) it is really listening on (useful when started with port 0)."""
+        assert self._server is not None, "call start() first"
+        return self._server.sockets[0].getsockname()[:2]
+
+    async def _on_connect(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        await handle_client(reader, writer, self.store)
+
+    async def _expire_loop(self) -> None:
+        """Step 3.2: kill expired keys even if nobody ever reads them again."""
+        while True:
+            try:
+                self.store.purge_expired(limit=EXPIRE_BATCH)
+                # more keys are already due: let the clients have a turn, then carry on at once
+                pause = 0 if self.store.has_due_expiry() else self._expire_interval
+            except Exception:  # the cleaner must never die, whatever happens
+                log.exception("expiry cleaner failed")
+                pause = self._expire_interval
+            await asyncio.sleep(pause)
+
+    async def serve_forever(self) -> None:
+        assert self._server is not None, "call start() first"
+        await self._server.serve_forever()
+
+    async def close(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        if self._server is not None:
+            self._server.close()
+            if hasattr(self._server, "close_clients"):  # Python 3.13+: don't wait for clients
+                self._server.close_clients()
+            await asyncio.wait_for(self._server.wait_closed(), timeout=5)
+
+
 async def start_server(
     host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, store: Store | None = None
-) -> asyncio.Server:
-    store = store if store is not None else Store()
-
-    async def on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        await handle_client(reader, writer, store)
-
-    return await asyncio.start_server(on_connect, host, port)
+) -> MiniRedisServer:
+    server = MiniRedisServer(host, port, store=store)
+    await server.start()
+    return server
 
 
 async def serve(host: str, port: int) -> None:
     server = await start_server(host, port)
-    addresses = ", ".join(str(sock.getsockname()) for sock in server.sockets)
-    log.info("MiniRedis listening on %s (Ctrl+C to stop)", addresses)
-    async with server:
+    log.info("MiniRedis listening on %s:%s (Ctrl+C to stop)", *server.address)
+    try:
         await server.serve_forever()
+    finally:
+        await server.close()
 
 
 def main() -> None:

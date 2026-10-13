@@ -8,6 +8,7 @@ milliseconds. Every access first checks whether that moment has passed and, if s
 first ("lazy" expiry), so an expired key is never visible.
 """
 
+import heapq
 import time
 from collections.abc import Callable
 
@@ -21,6 +22,10 @@ class Store:
         self._clock = clock  # milliseconds since 1970; tests pass a fake one
         self._data: dict[bytes, object] = {}
         self._expires: dict[bytes, int] = {}  # key -> unix time (ms) when it dies
+        # (dies-at, key) pairs with the earliest on top, so a background task can find the next
+        # key to kill without scanning. An entry goes stale when its key is deleted or given a
+        # different expiry; `_expires` is the truth, and stale entries are skipped when popped.
+        self._heap: list[tuple[int, bytes]] = []
         self.expired_keys = 0  # how many keys have died of old age
 
     def now(self) -> int:
@@ -47,7 +52,7 @@ class Store:
         self._expire_if_due(key)  # an old, already-expired value must not lend its expiry
         self._data[key] = value
         if expire_at is not None:
-            self._expires[key] = expire_at
+            self._schedule(key, expire_at)
         elif not keep_ttl:
             self._expires.pop(key, None)
 
@@ -73,7 +78,7 @@ class Store:
         """Make an existing key die at `at_ms`. Returns False if the key does not exist."""
         if not self.exists(key):
             return False
-        self._expires[key] = at_ms
+        self._schedule(key, at_ms)
         return True
 
     def persist(self, key: bytes) -> bool:
@@ -88,6 +93,36 @@ class Store:
             return -2
         at = self._expires.get(key)
         return -1 if at is None else max(0, at - self._clock())
+
+    def _schedule(self, key: bytes, at_ms: int) -> None:
+        self._expires[key] = at_ms
+        heapq.heappush(self._heap, (at_ms, key))
+        # a key whose expiry is changed again and again leaves stale entries behind; when they
+        # outnumber the real ones, rebuild the heap from the truth
+        if len(self._heap) > 2 * len(self._expires) + 1024:
+            self._heap = [(at, k) for k, at in self._expires.items()]
+            heapq.heapify(self._heap)
+
+    def purge_expired(self, limit: int = 1000) -> int:
+        """Remove keys whose time has come (the background cleaner). Looks at no more than
+        `limit` heap entries, so one call never holds up the server for long. Returns how many
+        keys it removed."""
+        removed = 0
+        now = self._clock()
+        for _ in range(limit):
+            if not self._heap or self._heap[0][0] > now:
+                break
+            at, key = heapq.heappop(self._heap)
+            if self._expires.get(key) == at:  # otherwise the entry is stale: skip it
+                del self._expires[key]
+                self._data.pop(key, None)
+                self.expired_keys += 1
+                removed += 1
+        return removed
+
+    def has_due_expiry(self) -> bool:
+        """True if the heap's earliest entry is already due (more purging is waiting)."""
+        return bool(self._heap) and self._heap[0][0] <= self._clock()
 
     def _expire_if_due(self, key: bytes) -> bool:
         """Remove the key if its time has come. Returns True if it did."""

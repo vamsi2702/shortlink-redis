@@ -49,13 +49,10 @@ class ServerThread(threading.Thread):
         self._loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
         server = await start_server("127.0.0.1", 0, store=self.store)
-        self.address = server.sockets[0].getsockname()[:2]
+        self.address = server.address
         self.ready.set()
         await self._stop_event.wait()
-        server.close()
-        if hasattr(server, "close_clients"):  # Python 3.13+: don't wait for lingering clients
-            server.close_clients()
-        await asyncio.wait_for(server.wait_closed(), timeout=5)
+        await server.close()
 
     def stop(self) -> None:
         if self._loop is not None and self._stop_event is not None:

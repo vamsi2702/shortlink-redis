@@ -192,7 +192,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 
 **3.2 Key expiry, background**
 - Learn first: heaps (`heapq`).
-- [ ] Background task removes expired keys using a heap
+- [x] Background task removes expired keys using a heap
 - **Done when:** expired keys are removed even if nobody reads them.
 
 **3.3 Lists**
