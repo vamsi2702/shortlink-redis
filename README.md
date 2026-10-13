@@ -4,7 +4,7 @@ A URL shortener backend (FastAPI + PostgreSQL) that will use a Redis-compatible 
 
 Work in progress. See [PLAN.md](PLAN.md) for the roadmap and [docs/DIAGRAMS.md](docs/DIAGRAMS.md) for diagrams.
 
-**Status:** Phase 1 (the backend) is complete. MiniRedis (Phases 2-3) is next; for now the API uses an in-process cache behind the same interface.
+**Status:** Phase 1 (the backend) and Phases 2-3 (MiniRedis: protocol, commands, expiry, lists, hashes, persistence, Pub/Sub) are complete. The API still uses an in-process cache behind the same interface; swapping in MiniRedis is Phase 4.
 
 ## Setup
 
@@ -44,10 +44,39 @@ r.get("name")          # b'vamsi'
 r.incr("hits")         # 1
 ```
 
-Commands so far: `PING`, `ECHO`, `SET` (no options yet), `GET`, `DEL`, `EXISTS`, `INCR`, `INCRBY`,
-`CLIENT` (`ID`, `SETNAME`, `GETNAME`, `SETINFO`), `HELLO 2`, `COMMAND COUNT`, `QUIT`. Expiry, lists,
-hashes and persistence come next. Replies are checked against real Redis by the tests in
-`miniredis/tests/test_compat_real_redis.py` (run `docker compose up -d redis` to enable them).
+| Area | Commands |
+|---|---|
+| Strings | `SET` (with `EX PX EXAT PXAT NX XX KEEPTTL`), `GET`, `DEL`, `EXISTS`, `INCR`, `INCRBY` |
+| Expiry | `EXPIRE PEXPIRE EXPIREAT PEXPIREAT` (with `NX XX GT LT`), `TTL`, `PTTL`, `PERSIST` |
+| Lists | `LPUSH`, `RPOP` (with a count), `LLEN`, `LRANGE` |
+| Hashes | `HSET`, `HGET`, `HGETALL` |
+| Pub/Sub | `SUBSCRIBE`, `UNSUBSCRIBE`, `PUBLISH` |
+| Server | `INFO`, `BGREWRITEAOF`, `TYPE`, `PING`, `ECHO`, `CLIENT`, `HELLO 2`, `COMMAND`, `QUIT` |
+
+**Persistence.** Every change is appended to a log file (`data/miniredis.aof` by default) before
+the reply is sent, and replayed when the server starts, so a restart or a `kill -9` loses nothing
+that was acknowledged. Expiry times are stored as exact moments, so a key keeps counting down
+while the server is off. A log cut off or damaged at its end is repaired on start-up (the
+discarded bytes are saved in `<file>.discarded`).
+
+```powershell
+python -m miniredis.server --appendfsync always     # always | everysec (default) | no
+python -m miniredis.server --no-aof                 # memory only
+python -m miniredis.server --aof-file my.aof --auto-aof-rewrite-min-size 1048576
+```
+
+`--appendfsync` chooses how often the file is forced to the disk: `always` is safest (and
+slowest), `everysec` can lose about a second of changes if the *machine* loses power, `no` leaves
+it to the operating system. The log is compacted by `BGREWRITEAOF`, or by itself once it has
+grown a lot; MiniRedis does this on its event loop, so clients wait about half a second per
+100,000 keys.
+
+Replies are checked against real Redis by the tests in
+`miniredis/tests/test_compat_real_redis.py` and `test_pubsub.py` (run `docker compose up -d redis`
+to enable them).
+
+Not implemented: `SET ... GET`, RESP3 (`HELLO 3`), pattern subscriptions, transactions, scripting,
+replication, `FLUSHALL`, eviction when memory is full.
 
 ## API
 
