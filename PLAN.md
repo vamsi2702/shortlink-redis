@@ -19,7 +19,6 @@ Client ──HTTP──> FastAPI service ──SQL──> PostgreSQL
                       └──RESP/TCP──> MiniRedis (our own server)
                                         ├─ key-value store (dict)
                                         ├─ TTL expiry (heap)
-                                        ├─ AOF persistence
                                         └─ Pub/Sub
 ```
 
@@ -30,6 +29,7 @@ Client ──HTTP──> FastAPI service ──SQL──> PostgreSQL
 ### Design decisions (fixed up front)
 
 - **Click events use a list queue** (`LPUSH` / `RPOP`), not Pub/Sub. Pub/Sub drops messages when no subscriber is connected; a queue does not.
+- **MiniRedis is memory-only.** Its data is lost when it stops (persistence to disk was built, then removed to keep the project simple). The cache simply refills from Postgres, but click events still waiting in the queue at that moment are lost; Phase 5 measures how many.
 - **Failure behavior:** if MiniRedis is down, redirects fall back to Postgres and rate limiting fails open. This is tested.
 - **Cache rules:** fixed cache TTL; invalidate the cache key when a link is edited or deleted; cache "not found" briefly (short TTL) to absorb junk-code traffic.
 - **Atomic rate limiting:** `SET key 1 EX <window> NX`, then `INCR` on later hits, so a counter can never be left without a TTL.
@@ -64,7 +64,6 @@ shortlink-redis/
 │  ├─ resp.py            # protocol parser/encoder
 │  ├─ commands.py
 │  ├─ store.py           # dict + TTL
-│  ├─ aof.py             # persistence
 │  └─ tests/
 ├─ api/                  # FastAPI service
 │  ├─ main.py
@@ -203,26 +202,16 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - [x] `HSET`, `HGET`
 - **Done when:** tests pass.
 
-**3.5 AOF write**
-- Learn first: what append-only logs and fsync are.
-- [x] Log every write command to a file; choose an fsync policy
-- **Done when:** the file grows as you send writes.
-
-**3.6 AOF replay**
-- [x] Replay the log on startup
-- **Done when:** data survives a restart, and expired keys stay expired.
-
-**3.7 Crash safety**
-- [x] Tests: kill mid-write, truncated file, corrupted last entry
-- **Done when:** the server starts cleanly after each of these.
+**3.5 to 3.7 and 3.9: persistence with an append-only file (AOF): built, then removed**
+- These steps (logging every change to a file, replaying it on start-up, crash-recovery tests, and
+  compacting the log) were completed, then taken out of the code on 2026-10-14 because the feature
+  was optional and made the project harder to follow. MiniRedis is now memory-only.
+- It is all in the git history before the commit "Remove append-only file persistence", so it can
+  be brought back if wanted.
 
 **3.8 `INFO` command**
 - [x] Ops count, connected clients, key count, memory estimate
 - **Done when:** `INFO` returns readable stats.
-
-**3.9 (Optional) AOF compaction**
-- [x] Rewrite the log so it holds only the current state
-- **Done when:** the file shrinks and replay still gives the same data.
 
 **3.10 (Optional) Pub/Sub**
 - [x] `SUBSCRIBE`, `PUBLISH`
@@ -273,7 +262,7 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 - **Done when:** you have a results table with p50, p95, p99 and ops/sec.
 
 **5.4 Reliability tests**
-- [ ] Kill MiniRedis under load; measure recovery time and click-event loss
+- [ ] Kill MiniRedis under load; measure how long the cache takes to warm up again and how many click events are lost (MiniRedis keeps nothing on disk)
 - **Done when:** the numbers are recorded.
 
 **5.5 Concurrency experiment**
@@ -296,7 +285,7 @@ Today the project only runs locally. This phase deploys it. Order matters: each 
 - Learn first: multi-stage Docker builds, environment variables, why secrets stay out of images.
 - [ ] Small multi-stage Dockerfiles for the API and MiniRedis, running as a non-root user
 - [ ] Configuration through environment variables; `.env.example` committed, real secrets never
-- [ ] Health checks and graceful shutdown (MiniRedis flushes the AOF on SIGTERM)
+- [ ] Health checks and graceful shutdown (MiniRedis stops cleanly on SIGTERM)
 - **Done when:** `docker compose up` works from freshly built images with no local Python installed.
 
 **6.2 CI builds and publishes images**
@@ -317,7 +306,7 @@ Today the project only runs locally. This phase deploys it. Order matters: each 
 
 **6.5 Managed services**
 - Learn first: why teams use managed databases instead of running Postgres themselves.
-- [ ] Move Postgres to RDS; keep MiniRedis on the instance (or its own container) with a persistent volume for the AOF
+- [ ] Move Postgres to RDS; keep MiniRedis on the instance (or in its own container)
 - **Done when:** the API talks to RDS and data survives replacing the EC2 instance.
 
 **6.6 Domain and HTTPS**
@@ -341,13 +330,13 @@ Today the project only runs locally. This phase deploys it. Order matters: each 
 **6.10 Kubernetes, locally first**
 - Learn first: pods, deployments, services, config maps, secrets, StatefulSets, persistent volumes.
 - [ ] Run a local cluster (kind or minikube)
-- [ ] Manifests (or a Helm chart): API as a Deployment with several replicas, Postgres and MiniRedis as StatefulSets with persistent volumes, an Ingress
+- [ ] Manifests (or a Helm chart): API as a Deployment with several replicas, Postgres as a StatefulSet with a persistent volume, MiniRedis as a Deployment (it keeps no data on disk), an Ingress
 - [ ] Liveness and readiness probes
 - **Done when:** the whole system runs in the local cluster and survives killing a pod.
 
 **6.11 Kubernetes experiments (your resume material)**
 - [ ] Scale the API to 1, 2, 4 replicas and re-run the Phase 5 load test
-- [ ] Kill the MiniRedis pod; show that the AOF persistent volume restores the data and the API degrades gracefully
+- [ ] Kill the MiniRedis pod; show that the API degrades gracefully (falls back to Postgres) and the cache refills afterwards
 - [ ] Horizontal Pod Autoscaler driven by CPU
 - **Done when:** a short write-up with numbers exists.
 
@@ -359,7 +348,7 @@ Honest note: Kubernetes is overkill for three small services, and a single EC2 i
 
 ### Stretch goals
 - Replication (primary/replica) for MiniRedis
-- Snapshots (RDB-style) in addition to AOF
+- Persistence for MiniRedis: snapshots (RDB-style) or an append-only log (an AOF version was built and removed; see the git history)
 - Analytics dashboard endpoint
 - Link expiry and custom aliases
 - Later project: replace storage with a Raft-replicated log
@@ -399,8 +388,8 @@ No external dataset is required. Generate it with `bench/seed.py`:
 | Metric | Meaning |
 |---|---|
 | Test pass rate, coverage | Target 80%+ on core code |
-| AOF recovery time | Replay time for e.g. 100k keys |
-| Data loss after crash | Keys lost per fsync policy (`always` vs `everysec`) |
+| Cache warm-up after a restart | How long until the hit ratio is back to normal after MiniRedis restarts empty |
+| Click events lost on restart | Events still in the queue when MiniRedis stopped |
 | Rate limiter accuracy | Allows exactly N requests per window under concurrent load |
 | Click-event loss | Events written to Postgres vs events sent (target 0 with the queue) |
 
@@ -423,7 +412,7 @@ No external dataset is required. Generate it with `bench/seed.py`:
 |---|---|
 | Scope creep in MiniRedis | Fixed command list; stretch goals only after Phase 5 |
 | Concurrency bugs (races, blocking the loop) | Single event loop, no blocking calls, tests with many concurrent clients |
-| Persistence corruption | Fsync policy, replay tests, truncated-file test |
+| Data lost when MiniRedis restarts | By design the cache refills from Postgres; click events in the queue are lost, which Phase 5 measures and the README states |
 | Stalling on a hard part | Phase 1 delivers a working backend regardless; MiniRedis is additive; Pub/Sub and compaction can be cut |
 | `redis-py` handshake incompatibility | Handshake stubs in Phase 2; test against `redis-py` early |
 | Unfair or noisy benchmarks | Fair-benchmark rules in section 7; benchmark inside Docker |
@@ -456,4 +445,4 @@ Questions to be ready for: How do you avoid code collisions? What happens when t
 
 ## 12. Resume bullet (fill in real numbers)
 
-> Built a URL shortener backend (FastAPI, PostgreSQL) with a custom Redis-compatible cache server written from scratch in Python (RESP protocol, TTL expiry, AOF persistence, pub/sub); cut p99 redirect latency by **X%** at **N** concurrent clients.
+> Built a URL shortener backend (FastAPI, PostgreSQL) with a custom Redis-compatible cache server written from scratch in Python (RESP protocol, TTL expiry with a background cleaner, lists, hashes, pub/sub); cut p99 redirect latency by **X%** at **N** concurrent clients.

@@ -1,4 +1,3 @@
-import os
 import time
 
 import pytest
@@ -6,7 +5,6 @@ import redis
 
 from miniredis.commands import ClientState, Context, Stats, execute
 from miniredis.info import SECTIONS, human_bytes
-from miniredis.resp import encode_command
 from miniredis.store import Store
 
 
@@ -44,9 +42,7 @@ def test_the_report_has_every_section_in_a_fixed_order(ctx):
     text = run(ctx, "INFO")
 
     headers = [line for line in text.decode().split("\r\n") if line.startswith("# ")]
-    assert headers == [
-        "# Server", "# Clients", "# Memory", "# Persistence", "# Stats", "# Keyspace",
-    ]  # fmt: skip
+    assert headers == ["# Server", "# Clients", "# Memory", "# Stats", "# Keyspace"]
 
 
 def test_sections_are_separated_by_a_blank_line_and_each_line_ends_with_crlf(ctx):
@@ -183,25 +179,23 @@ def test_uptime_follows_the_clock_of_the_server(ctx):
     assert server["uptime_in_days"] == "1"
 
 
-def test_without_a_log_persistence_says_so(ctx):
-    persistence = parse(run(ctx, "INFO", "persistence"))["persistence"]
-
-    assert persistence["aof_enabled"] == "0"
-    assert persistence["loading"] == "0"
-
-
-def test_the_servers_own_facts_are_added(clock):
+def test_the_servers_own_facts_are_added_to_a_section(clock):
     ctx = Context(
         store=Store(clock=clock),
         client=ClientState(id=1),
         stats=Stats(),
-        extra_info=lambda: {"server": {"tcp_port": 1234}, "persistence": {"aof_enabled": 1}},
+        extra_info=lambda: {"server": {"tcp_port": 1234, "redis_mode": "custom"}},
     )
 
-    sections = parse(run(ctx, "INFO"))
+    server = parse(run(ctx, "INFO"))["server"]
 
-    assert sections["server"]["tcp_port"] == "1234"
-    assert sections["persistence"]["aof_enabled"] == "1"  # replaces the default of 0
+    assert server["tcp_port"] == "1234"
+    assert server["redis_mode"] == "custom"  # a fact the server supplies replaces the default
+
+
+def test_there_is_no_persistence_section(ctx):
+    assert run(ctx, "INFO", "persistence") == b""  # an unknown section: an empty report
+    assert "persistence" not in parse(run(ctx, "INFO"))
 
 
 def test_info_on_a_big_dataset_still_answers_quickly(ctx):
@@ -260,45 +254,6 @@ def test_the_servers_real_port_and_process_are_reported(server, client):
     assert sections["server"]["tcp_port"] == str(server.address[1])
     assert int(sections["server"]["process_id"]) > 0
     assert sections["server"]["redis_mode"] == "standalone"
-
-
-def test_persistence_facts_with_a_log(aof_server, aof_client, aof_path):
-    aof_client.call("SET", "a", "1")
-
-    persistence = info(aof_client, "persistence")["persistence"]
-
-    assert persistence["aof_enabled"] == "1"
-    assert persistence["aof_fsync_policy"] == "everysec"
-    assert persistence["aof_current_size"] == str(aof_path.stat().st_size)
-    assert persistence["aof_last_write_status"] == "ok"
-    assert persistence["aof_loaded_commands"] == "0"
-
-
-def test_persistence_reports_what_the_replay_found(aof_path, make_server, make_client):
-    aof_path.write_bytes(
-        encode_command("SET", "a", "1") + encode_command("SET", "b", "2") + b"?broken"
-    )
-
-    client = make_client(make_server(aof_path=aof_path).address)
-    persistence = info(client, "persistence")["persistence"]
-
-    assert persistence["aof_loaded_commands"] == "2"
-    assert persistence["aof_discarded_bytes"] == str(len(b"?broken"))
-
-
-def test_a_failed_log_write_shows_in_the_report(aof_server, aof_client, monkeypatch):
-    real_write = os.write
-
-    def disk_full(fd, data):
-        raise OSError("disk full")
-
-    monkeypatch.setattr(os, "write", disk_full)
-    aof_client.call("SET", "a", "1")
-    monkeypatch.setattr(os, "write", real_write)
-
-    assert info(aof_client, "persistence")["persistence"]["aof_last_write_status"] == "err"
-    aof_client.call("SET", "b", "2")  # the disk works again
-    assert info(aof_client, "persistence")["persistence"]["aof_last_write_status"] == "ok"
 
 
 def test_redis_py_can_read_the_report(server):

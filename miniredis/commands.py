@@ -15,7 +15,6 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from itertools import islice
-from typing import Protocol
 
 from miniredis.info import render as render_info
 from miniredis.pubsub import PubSub
@@ -51,12 +50,6 @@ class Replies(list):
     as SUBSCRIBE does (one confirmation per channel). Each item is encoded on its own."""
 
 
-class ChangeLog(Protocol):
-    """Where changes are recorded: the AppendOnlyFile (or a stand-in in tests)."""
-
-    def append(self, words: list[bytes]) -> None: ...
-
-
 @dataclass
 class Stats:
     """Counters for the whole server, shown by INFO. One is shared by every client."""
@@ -75,21 +68,10 @@ class Context:
 
     store: Store
     client: ClientState
-    aof: ChangeLog | None = None
     stats: Stats = field(default_factory=Stats)
-    # The server's own facts for INFO (listening port, log file state...), by section name.
+    # The server's own facts for INFO (such as its listening port), by section name.
     extra_info: Callable[[], dict[str, dict[str, object]]] | None = None
-    # Rewrites the append-only file (None if there is no file). Set by the server.
-    rewrite_aof: Callable[[], None] | None = None
     pubsub: PubSub = field(default_factory=PubSub)  # shared by all clients (step 3.10)
-
-    def propagate(self, *words: object) -> None:
-        """Record a change in the append-only file, if there is one.
-
-        Pass the canonical form of what just happened, one that gives the same result when it is
-        replayed later: absolute times (PXAT), never "10 seconds from now"."""
-        if self.aof is not None:
-            self.aof.append([w if isinstance(w, bytes) else str(w).encode() for w in words])
 
 
 class CommandError(Exception):
@@ -283,19 +265,10 @@ def set_(ctx: Context, args: list[bytes]) -> object:
     exists = store.exists(key)
     if (options.nx and exists) or (options.xx and not exists):
         return None  # the condition failed: nothing is changed and the reply is a null
-    in_the_past = options.expire_at is not None and options.expire_at <= store.now()
-    if in_the_past and not store.loading:
-        if store.delete(key):  # an expiry in the past means the key is gone straight away
-            ctx.propagate(b"DEL", key)
+    if options.expire_at is not None and options.expire_at <= store.now():
+        store.delete(key)  # an expiry in the past means the key is gone straight away
         return OK
     store.set(key, value, expire_at=options.expire_at, keep_ttl=options.keep_ttl)
-    # logged without NX/XX (they have already been decided) and with an absolute time
-    if options.expire_at is not None:
-        ctx.propagate(b"SET", key, value, b"PXAT", options.expire_at)
-    elif options.keep_ttl:
-        ctx.propagate(b"SET", key, value, b"KEEPTTL")
-    else:
-        ctx.propagate(b"SET", key, value)
     return OK
 
 
@@ -309,10 +282,7 @@ def get(ctx: Context, args: list[bytes]) -> object:
 @command("del", -2)
 def del_(ctx: Context, args: list[bytes]) -> object:
     """Delete keys; the reply is how many actually existed (DEL a a counts a only once)."""
-    deleted = [key for key in args if ctx.store.delete(key)]
-    if deleted:
-        ctx.propagate(b"DEL", *deleted)
-    return len(deleted)
+    return sum(ctx.store.delete(key) for key in args)
 
 
 @command("exists", -2)
@@ -338,9 +308,7 @@ def _increment(ctx: Context, key: bytes, amount: int) -> int:
     result = value + amount
     if not INT64_MIN <= result <= INT64_MAX:
         raise CommandError("ERR increment or decrement would overflow")
-    new_value = str(result).encode()
-    ctx.store.set(key, new_value, keep_ttl=True)  # counting does not reset the expiry
-    ctx.propagate(b"SET", key, new_value, b"KEEPTTL")  # the outcome, not the increment
+    ctx.store.set(key, str(result).encode(), keep_ttl=True)  # counting does not reset the expiry
     return result
 
 
@@ -407,7 +375,6 @@ def lpush(ctx: Context, args: list[bytes]) -> object:
     assert items is not None
     for value in args[1:]:
         items.appendleft(value)  # each value goes in front of the previous one
-    ctx.propagate(b"LPUSH", *args)
     return len(items)
 
 
@@ -426,12 +393,9 @@ def rpop(ctx: Context, args: list[bytes]) -> object:
     if count is None:
         value = items.pop()
         drop_if_empty(ctx, args[0], items)
-        ctx.propagate(b"RPOP", args[0])
         return value
     popped = [items.pop() for _ in range(min(count, len(items)))]
     drop_if_empty(ctx, args[0], items)
-    if popped:
-        ctx.propagate(b"RPOP", args[0], len(popped))  # exactly as many as were really taken
     return popped
 
 
@@ -491,7 +455,6 @@ def hset(ctx: Context, args: list[bytes]) -> object:
         if args[i] not in fields:
             added += 1
         fields[args[i]] = args[i + 1]
-    ctx.propagate(b"HSET", *args)
     return added
 
 
@@ -551,12 +514,10 @@ def _expire_command(
         return 0
     if lt and current is not None and when >= current:
         return 0
-    if when <= store.now() and not store.loading:
+    if when <= store.now():
         store.delete(key)  # a time in the past (or EXPIRE 0) deletes the key
-        ctx.propagate(b"DEL", key)
         return 1
     store.set_expiry(key, when)
-    ctx.propagate(b"PEXPIREAT", key, when)  # always an absolute time in milliseconds
     return 1
 
 
@@ -589,10 +550,7 @@ def pttl(ctx: Context, args: list[bytes]) -> object:
 
 @command("persist", 2)
 def persist(ctx: Context, args: list[bytes]) -> object:
-    if not ctx.store.persist(args[0]):
-        return 0
-    ctx.propagate(b"PERSIST", args[0])
-    return 1
+    return 1 if ctx.store.persist(args[0]) else 0
 
 
 # ---- the handshake: what clients send when they connect (step 2.7) --------------------------
@@ -742,16 +700,6 @@ def unsubscribe(ctx: Context, args: list[bytes]) -> object:
 def publish(ctx: Context, args: list[bytes]) -> object:
     """Send a message to a channel. The reply is how many clients received it."""
     return ctx.pubsub.publish(args[0], args[1])
-
-
-@command("bgrewriteaof", 1)
-def bgrewriteaof(ctx: Context, args: list[bytes]) -> object:
-    """Compact the append-only file. Real Redis does this in a background process; MiniRedis does
-    it right here, so the reply comes when it is finished and other clients wait meanwhile."""
-    if ctx.rewrite_aof is None:
-        raise CommandError("ERR the append-only file is not enabled")
-    ctx.rewrite_aof()
-    return SimpleString("Append only file rewriting done")
 
 
 @command("quit", -1)

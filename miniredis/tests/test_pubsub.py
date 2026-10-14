@@ -343,17 +343,6 @@ def test_a_subscriber_can_still_run_ping_and_quit(connect):
     assert subscriber.server_closed_connection()
 
 
-def test_published_messages_are_not_written_to_the_log(
-    aof_server, aof_client, aof_path, make_client
-):
-    publisher = make_client(aof_server.address)
-    aof_client.call("SUBSCRIBE", "a")
-
-    assert publisher.call("PUBLISH", "a", "transient") == 1
-
-    assert aof_path.read_bytes() == b""
-
-
 def test_info_counts_pubsub_activity(connect):
     subscriber, other = connect(), connect()
     subscriber.call("SUBSCRIBE", "a", "b")

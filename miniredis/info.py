@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from miniredis.commands import Context
 
 VERSION = "0.1.0"
-SECTIONS = ("server", "clients", "memory", "persistence", "stats", "keyspace")
+SECTIONS = ("server", "clients", "memory", "stats", "keyspace")
 _ALL = {"default", "all", "everything"}
 
 
@@ -54,8 +54,6 @@ def _facts(name: str, ctx: "Context") -> dict[str, object]:
     if name == "memory":
         used = store.memory_estimate()
         return {"used_memory": used, "used_memory_human": human_bytes(used)}
-    if name == "persistence":
-        return {"loading": int(store.loading), "aof_enabled": 0}
     if name == "stats":
         return {
             "total_connections_received": stats.connections_received,

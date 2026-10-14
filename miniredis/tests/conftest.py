@@ -40,7 +40,7 @@ class ServerThread(threading.Thread):
         self.redis: MiniRedisServer | None = None  # the running server, for peeking inside
         self.address: tuple[str, int] | None = None
         self.ready = threading.Event()
-        self._options = options  # aof_path, appendfsync, auto_rewrite_min_size, ...
+        self._options = options  # passed on to start_server, e.g. expire_interval
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event: asyncio.Event | None = None
 
@@ -117,56 +117,6 @@ def server():
     thread = start_server_thread()
     yield thread
     thread.stop()
-
-
-@pytest.fixture
-def make_server():
-    """make_server(aof_path=..., appendfsync=...) starts another server; all stop after the test."""
-    threads: list[ServerThread] = []
-
-    def _make(**options) -> ServerThread:
-        thread = start_server_thread(**options)
-        threads.append(thread)
-        return thread
-
-    yield _make
-    for thread in threads:
-        thread.stop()
-
-
-@pytest.fixture
-def make_client():
-    """make_client(address) opens a client to any server; all are closed after the test."""
-    clients: list[RespClient] = []
-
-    def _make(address: tuple[str, int]) -> RespClient:
-        clients.append(RespClient(address))
-        return clients[-1]
-
-    yield _make
-    for client in clients:
-        client.close()
-
-
-@pytest.fixture
-def aof_path(tmp_path):
-    """Where a test's append-only file lives."""
-    return tmp_path / "test.aof"
-
-
-@pytest.fixture
-def aof_server(aof_path):
-    """A server that logs every change to `aof_path`."""
-    thread = start_server_thread(aof_path=aof_path)
-    yield thread
-    thread.stop()
-
-
-@pytest.fixture
-def aof_client(aof_server):
-    client = RespClient(aof_server.address)
-    yield client
-    client.close()
 
 
 @pytest.fixture

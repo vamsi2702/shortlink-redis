@@ -8,7 +8,5 @@ docs/
 .ruff_cache/
 .mypy_cache/
 .env
-*.aof
-data/
 .idea/
 .vscode/

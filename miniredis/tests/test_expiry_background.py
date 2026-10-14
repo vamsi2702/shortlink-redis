@@ -159,7 +159,9 @@ def test_keys_without_an_expiry_are_left_alone(server, client):
 def test_thousands_of_keys_expiring_together_do_not_freeze_the_server(server, connect):
     loader, probe = connect(), connect()
     count = 20_000
-    dies_at = time.time_ns() // 1_000_000 + 2_000  # all keys die at the very same moment
+    # all keys die at the very same moment; the margin is generous so a busy machine can still
+    # finish loading them all before the first one dies
+    dies_at = time.time_ns() // 1_000_000 + 5_000
     loader.send_raw(
         b"".join(encode_command("SET", f"k{i}", "v", "PXAT", dies_at) for i in range(count))
     )
