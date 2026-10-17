@@ -4,9 +4,10 @@ from sqlalchemy.orm import Session
 
 from api import config
 from api.db import engine
-from api.deps import get_cache, get_db
+from api.deps import get_cache, get_click_queue, get_db
 from api.main import app
 from api.services.cache import InMemoryCache
+from api.services.clicks import InMemoryClickQueue, RedisClickQueue
 from api.services.redis_cache import RedisCache, connect
 from miniredis.testing import start_server_thread
 
@@ -58,6 +59,20 @@ def client(db, cache):
     app.dependency_overrides[get_cache] = lambda: cache
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def click_queue(client):
+    """An in-process click queue installed as the app's queue, so tests can see what was queued."""
+    queue = InMemoryClickQueue()
+    app.dependency_overrides[get_click_queue] = lambda: queue
+    return queue
+
+
+@pytest.fixture
+def redis_click_queue(miniredis_server):
+    """A click queue stored in the test MiniRedis."""
+    return RedisClickQueue(connect(miniredis_server.url))
 
 
 @pytest.fixture

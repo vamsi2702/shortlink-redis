@@ -10,8 +10,9 @@ from api import config
 from api.db import SessionLocal
 from api.models import User
 from api.services.cache import Cache, default_cache
+from api.services.clicks import ClickQueue, NullClickQueue, RedisClickQueue
 from api.services.ratelimit import allow_request, client_identity
-from api.services.redis_cache import RedisCache, connect
+from api.services.redis_cache import Guard, RedisCache, connect
 from api.services.security import decode_access_token
 
 
@@ -26,17 +27,27 @@ DbSession = Annotated[Session, Depends(get_db)]
 
 
 @lru_cache
-def _miniredis_cache(url: str) -> Cache:
-    return RedisCache(connect(url))  # built once, so every request shares one connection pool
+def _miniredis(url: str) -> tuple[RedisCache, RedisClickQueue]:
+    """The cache and the click queue, built once. They share one connection pool and one circuit
+    breaker, so when MiniRedis is down both find out from the same failure."""
+    client, guard = connect(url), Guard()
+    return RedisCache(client, guard), RedisClickQueue(client, guard)
 
 
 def get_cache() -> Cache:
     if config.MINIREDIS_URL:
-        return _miniredis_cache(config.MINIREDIS_URL)
+        return _miniredis(config.MINIREDIS_URL)[0]
     return default_cache
 
 
+def get_click_queue() -> ClickQueue:
+    if config.MINIREDIS_URL:
+        return _miniredis(config.MINIREDIS_URL)[1]
+    return NullClickQueue()
+
+
 CacheDep = Annotated[Cache, Depends(get_cache)]
+ClickQueueDep = Annotated[ClickQueue, Depends(get_click_queue)]
 
 
 def rate_limited(scope: str) -> params.Depends:

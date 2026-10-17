@@ -26,6 +26,11 @@ MINIREDIS_RETRY_SECONDS = float(os.environ.get("MINIREDIS_RETRY_SECONDS", "5"))
 RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "100"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
+# Clicks: each redirect pushes an event onto this MiniRedis list; the worker drains it in batches
+CLICK_QUEUE_KEY = os.environ.get("CLICK_QUEUE_KEY", "clicks")
+CLICK_BATCH_SIZE = int(os.environ.get("CLICK_BATCH_SIZE", "100"))
+CLICK_WORKER_INTERVAL_SECONDS = float(os.environ.get("CLICK_WORKER_INTERVAL_SECONDS", "1"))
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+psycopg://shortlink:shortlink@localhost:5432/shortlink",
