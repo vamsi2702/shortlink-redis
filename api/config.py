@@ -1,5 +1,7 @@
 import os
 
+FALSE_WORDS = ("0", "false", "no", "off")  # how an on/off environment variable says "off"
+
 # Public address of the service; short links are returned as BASE_URL/<code>
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
 
@@ -13,6 +15,9 @@ BCRYPT_ROUNDS = int(os.environ.get("BCRYPT_ROUNDS", "12"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 NOT_FOUND_TTL_SECONDS = int(os.environ.get("NOT_FOUND_TTL_SECONDS", "30"))
 
+# "false" turns the redirect cache off: every redirect then asks Postgres. Rate limiting is off
+# too, since its counters live in the cache. The benchmarks use this as the "no cache" baseline.
+CACHE_ENABLED = os.environ.get("CACHE_ENABLED", "true").lower() not in FALSE_WORDS
 # Where MiniRedis listens, e.g. redis://localhost:6380. Empty means "do not use MiniRedis": the API
 # then keeps its cache inside its own process (fine for development and for the unit tests).
 MINIREDIS_URL = os.environ.get("MINIREDIS_URL", "")
@@ -23,10 +28,12 @@ MINIREDIS_RETRY_SECONDS = float(os.environ.get("MINIREDIS_RETRY_SECONDS", "5"))
 
 # Rate limiting: at most this many requests per client in each window (separately for redirects,
 # creating links, and signing in or registering)
+RATE_LIMIT_ENABLED = os.environ.get("RATE_LIMIT_ENABLED", "true").lower() not in FALSE_WORDS
 RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "100"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
 
 # Clicks: each redirect pushes an event onto this MiniRedis list; the worker drains it in batches
+CLICKS_ENABLED = os.environ.get("CLICKS_ENABLED", "true").lower() not in FALSE_WORDS
 CLICK_QUEUE_KEY = os.environ.get("CLICK_QUEUE_KEY", "clicks")
 CLICK_BATCH_SIZE = int(os.environ.get("CLICK_BATCH_SIZE", "100"))
 CLICK_WORKER_INTERVAL_SECONDS = float(os.environ.get("CLICK_WORKER_INTERVAL_SECONDS", "1"))

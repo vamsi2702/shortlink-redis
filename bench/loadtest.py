@@ -1,26 +1,34 @@
 """Send a workload to the API from many clients and report latency and throughput.
 
-    python -m bench.loadtest --url http://localhost:8000 --clients 50 --duration 20 --warmup 5
+    python -m bench.loadtest --url http://localhost:8000 --clients 50 --duration 20 \
+        --warmup-requests 20000
 
 Every client sends one request, waits for the answer, then sends the next ("closed loop"). A warm-up
-period runs first and is not measured, so the cache can fill. Then requests started during the
-measured window are timed. Because a client waits for its answer, a slow server is offered less
-load than real traffic would give it, so the tail latencies are a little kinder than in real life.
+runs first and is not measured, so the cache can fill; it ends after a fixed NUMBER of requests, so
+every setup does the same amount of warm-up work however fast it is. Then requests started during
+the measured window are timed. Because a client waits for its answer, a slow server is offered
+less load than real traffic would give it, so the tail latencies are a little kinder than real life.
+
+The HTTP is written by hand on asyncio streams (class Connection) instead of using httpx. Measured
+from inside Docker, httpx's async client topped out near 125 requests/s against the same server
+that a plain asyncio client drove at about 500, so with httpx the load generator itself would have
+been the bottleneck and the benchmark would have measured the tool, not the API.
 """
 
 import argparse
 import asyncio
 import json
+import sys
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
-
-import httpx
+from urllib.parse import urlsplit
 
 from bench import dataset
 from bench.workload import DEFAULT_WRITE_RATIO, PATTERNS, Workload
 
 EXPECTED_STATUS = {"read": 302, "write": 201}
+HEADER_END = b"\r\n\r\n"
 
 
 @dataclass
@@ -37,6 +45,64 @@ class Result:
     max_ms: float
     cache_hit_ratio: float | None  # taken from the API's /metrics; None if it could not be read
     statuses: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass
+class Window:
+    """Shared by the clients and the coordinator: counts requests, says when to measure and stop."""
+
+    sent: int = 0
+    start: float | None = None  # measuring begins here (None while warming up)
+    end: float = float("inf")  # clients stop sending at this time
+
+
+class RequestFailed(Exception):
+    """A request got no usable answer (refused, reset, timed out, or garbled)."""
+
+
+class Connection:
+    """One keep-alive HTTP/1.1 connection to the API, with just enough HTTP for this project's
+    answers: a status line, a Content-Length, and a body."""
+
+    def __init__(self, host: str, port: int, timeout: float) -> None:
+        self._host, self._port, self._timeout = host, port, timeout
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+
+    async def request(self, method: str, path: str, body: bytes | None = None) -> tuple[int, bytes]:
+        """Returns (status, body). Raises RequestFailed; the next call then reconnects."""
+        try:
+            return await asyncio.wait_for(self._exchange(method, path, body), self._timeout)
+        except (OSError, TimeoutError, asyncio.IncompleteReadError, ValueError) as exc:
+            self.close()
+            raise RequestFailed(type(exc).__name__) from exc
+
+    async def _exchange(self, method: str, path: str, body: bytes | None) -> tuple[int, bytes]:
+        if self._writer is None:
+            self._reader, self._writer = await asyncio.open_connection(self._host, self._port)
+        assert self._reader is not None
+        head = f"{method} {path} HTTP/1.1\r\nHost: {self._host}\r\n"
+        if body is not None:
+            head += f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n"
+        self._writer.write(head.encode() + b"\r\n" + (body or b""))
+        answer = await self._reader.readuntil(HEADER_END)
+        status = int(answer[9:12])
+        length = 0
+        for line in answer.split(b"\r\n")[1:]:
+            name, _, value = line.partition(b":")
+            if name.strip().lower() == b"content-length":
+                length = int(value)
+            elif name.strip().lower() == b"transfer-encoding":
+                raise ValueError("chunked answers are not supported")
+        data = await self._reader.readexactly(length) if length else b""
+        if b"connection: close" in answer.lower():
+            self.close()
+        return status, data
+
+    def close(self) -> None:
+        if self._writer is not None:
+            self._writer.close()
+        self._reader = self._writer = None
 
 
 def percentile(sorted_values: list[float], percent: float) -> float:
@@ -56,12 +122,19 @@ def counter_value(metrics_text: str, name: str, **labels: str) -> float:
     return 0.0
 
 
-async def cache_counts(client: httpx.AsyncClient) -> tuple[float, float] | None:
+async def cache_counts(connection: Connection) -> tuple[float, float] | None:
     """(hits, misses) so far, from the API's /metrics."""
-    try:
-        text = (await client.get("/metrics")).text
-    except httpx.HTTPError:
+    for attempt in range(3):
+        try:
+            _, body = await connection.request("GET", "/metrics")
+            break
+        except RequestFailed as exc:
+            print(
+                f"warning: reading /metrics failed ({exc}), attempt {attempt + 1}", file=sys.stderr
+            )
+    else:
         return None
+    text = body.decode()
     return (
         counter_value(text, "shortlink_cache_lookups_total", result="hit"),
         counter_value(text, "shortlink_cache_lookups_total", result="miss"),
@@ -69,30 +142,54 @@ async def cache_counts(client: httpx.AsyncClient) -> tuple[float, float] | None:
 
 
 async def one_client(
-    client: httpx.AsyncClient, workload: Workload, measure_from: float, end: float
+    connection: Connection, workload: Workload, window: Window
 ) -> tuple[list[float], Counter[str], int]:
-    """Send requests until `end`. Returns the timed latencies, counts per status, and errors."""
+    """Send requests until the window ends. Returns the timed latencies, status counts, errors."""
     latencies: list[float] = []
     statuses: Counter[str] = Counter()
     errors = 0
-    while (started := time.perf_counter()) < end:
+    while (started := time.perf_counter()) < window.end:
         request = workload.next()
+        window.sent += 1
         try:
             if request.kind == "read":
-                response = await client.get(f"/{request.code}", follow_redirects=False)
+                code, _ = await connection.request("GET", f"/{request.code}")
             else:
-                response = await client.post("/shorten", json={"url": request.url})
-            status, failed = str(response.status_code), (
-                response.status_code != EXPECTED_STATUS[request.kind]
-            )
-        except httpx.HTTPError as exc:
-            status, failed = type(exc).__name__, True
+                payload = json.dumps({"url": request.url}).encode()
+                code, _ = await connection.request("POST", "/shorten", payload)
+            status, failed = str(code), code != EXPECTED_STATUS[request.kind]
+        except RequestFailed as exc:
+            status, failed = str(exc), True
+            await asyncio.sleep(0.005)  # do not spin when the server is gone
         elapsed = time.perf_counter() - started
-        if started >= measure_from:
+        if window.start is not None and started >= window.start:
             statuses[status] += 1
             latencies.append(elapsed)
             errors += failed
     return latencies, statuses, errors
+
+
+async def coordinate(
+    monitor: Connection,
+    window: Window,
+    duration: float,
+    warmup_requests: int,
+    warmup_seconds: float,
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+    """Wait out the warm-up, open the measured window, and read the cache counters at both ends."""
+    began = time.perf_counter()
+    while (
+        window.sent < warmup_requests
+        if warmup_requests
+        else time.perf_counter() - began < warmup_seconds
+    ):
+        await asyncio.sleep(0.02)
+    before = await cache_counts(monitor)
+    window.start = time.perf_counter()
+    window.end = window.start + duration
+    await asyncio.sleep(duration + 0.1)  # the extra moment lets the last requests finish
+    after = await cache_counts(monitor)
+    return before, after
 
 
 async def run_load(
@@ -105,18 +202,24 @@ async def run_load(
     seed: int = 0,
     write_ratio: float = DEFAULT_WRITE_RATIO,
     timeout: float = 10.0,
+    warmup_requests: int = 0,
 ) -> Result:
-    limits = httpx.Limits(max_connections=clients + 2, max_keepalive_connections=clients + 2)
-    async with httpx.AsyncClient(base_url=base_url, limits=limits, timeout=timeout) as http:
-        start = time.perf_counter()
-        measure_from, end = start + warmup, start + warmup + duration
-        workloads = [Workload(codes, pattern, seed * 1000 + i, write_ratio) for i in range(clients)]
-        tasks = [asyncio.create_task(one_client(http, w, measure_from, end)) for w in workloads]
-
-        await asyncio.sleep(max(0.0, measure_from - time.perf_counter()))
-        before = await cache_counts(http)
-        outputs = await asyncio.gather(*tasks)
-        after = await cache_counts(http)
+    """Run one load test. The warm-up is `warmup_requests` requests if that is given, otherwise
+    `warmup` seconds."""
+    url = urlsplit(base_url)
+    host, port = url.hostname or "localhost", url.port or 80
+    window = Window()
+    workloads = [Workload(codes, pattern, seed * 1000 + i, write_ratio) for i in range(clients)]
+    connections = [Connection(host, port, timeout) for _ in range(clients)]
+    monitor = Connection(host, port, timeout)  # reads /metrics, apart from the clients
+    tasks = [
+        asyncio.create_task(one_client(connection, workload, window))
+        for connection, workload in zip(connections, workloads, strict=True)
+    ]
+    before, after = await coordinate(monitor, window, duration, warmup_requests, warmup)
+    outputs = await asyncio.gather(*tasks)
+    for connection in (*connections, monitor):
+        connection.close()
 
     latencies = sorted(value for lat, _, _ in outputs for value in lat)
     statuses: Counter[str] = Counter()
@@ -160,20 +263,30 @@ def main() -> None:
     parser.add_argument("--pattern", choices=PATTERNS, default="zipf")
     parser.add_argument("--clients", type=int, default=1)
     parser.add_argument("--duration", type=float, default=10.0, help="measured seconds")
-    parser.add_argument("--warmup", type=float, default=3.0, help="seconds before measuring")
+    parser.add_argument("--warmup", type=float, default=3.0, help="warm-up seconds")
+    parser.add_argument("--warmup-requests", type=int, default=0, help="warm up this many requests")
     parser.add_argument("--links", type=int, default=dataset.DEFAULT_LINKS)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--write-ratio", type=float, default=DEFAULT_WRITE_RATIO)
-    parser.add_argument("--json", help="also write the result to this file")
+    parser.add_argument("--json", help="write the result to this file; '-' prints only the JSON")
     args = parser.parse_args()
 
-    codes = dataset.make_codes(args.links)
     result = asyncio.run(
         run_load(
-            args.url, codes, args.pattern, args.clients, args.duration, args.warmup, args.seed,
+            args.url,
+            dataset.make_codes(args.links),
+            args.pattern,
+            args.clients,
+            args.duration,
+            args.warmup,
+            args.seed,
             args.write_ratio,
+            warmup_requests=args.warmup_requests,
         )
     )
+    if args.json == "-":
+        print(json.dumps(asdict(result)))
+        return
     print(format_result(result))
     if args.json:
         with open(args.json, "w", encoding="utf-8") as out:

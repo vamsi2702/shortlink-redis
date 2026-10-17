@@ -6,7 +6,14 @@ from itertools import islice
 import pytest
 
 from bench import dataset
-from bench.loadtest import counter_value, format_result, percentile, run_load
+from bench.loadtest import (
+    Connection,
+    RequestFailed,
+    counter_value,
+    format_result,
+    percentile,
+    run_load,
+)
 from bench.workload import Request, Workload, hot_share
 
 CODES = dataset.make_codes(10_000)
@@ -123,12 +130,19 @@ class FakeApi(BaseHTTPRequestHandler):
     redirect_status = 302
     hits = 0
     misses = 0
+    clients: set = set()  # the client addresses seen: one per TCP connection
+    close_next = False  # answer the next request with "Connection: close"
 
     def _reply(self, status, body=b"", headers=None):
         self.send_response(status)
         self.send_header("Content-Length", str(len(body)))
         for key, value in (headers or {}).items():
             self.send_header(key, value)
+        type(self).clients.add(self.client_address)
+        if type(self).close_next:
+            type(self).close_next = False
+            self.send_header("Connection", "close")
+            self.close_connection = True
         self.end_headers()
         self.wfile.write(body)
 
@@ -155,6 +169,7 @@ class FakeApi(BaseHTTPRequestHandler):
 @pytest.fixture
 def fake_api():
     FakeApi.redirect_status, FakeApi.hits, FakeApi.misses = 302, 0, 0
+    FakeApi.clients, FakeApi.close_next = set(), False
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeApi)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -198,3 +213,85 @@ def test_a_server_that_is_not_there_gives_errors_not_a_crash():
     assert result.requests > 0
     assert result.errors == result.requests
     assert result.cache_hit_ratio is None
+
+
+def test_the_warmup_can_be_counted_in_requests(fake_api):
+    seen = []
+    real_get = FakeApi.do_GET
+
+    def counting_get(self):
+        seen.append(self.path)
+        real_get(self)
+
+    FakeApi.do_GET = counting_get
+    try:
+        result = load(fake_api, write_ratio=0.0, warmup_requests=40, warmup=99, duration=0.3)
+    finally:
+        FakeApi.do_GET = real_get
+
+    redirects = [path for path in seen if path != "/metrics"]
+    assert len(redirects) >= 40 + result.requests  # the warm-up requests were sent but not timed
+    assert result.requests > 0
+
+
+# ---- the hand-written HTTP connection -----------------------------------------------------------
+
+
+def request(connection, method="GET", path="/abc", body=None):
+    return asyncio.run(connection.request(method, path, body))
+
+
+def test_one_connection_is_reused_for_many_requests(fake_api):
+    FakeApi.clients = set()
+    host, port = fake_api.removeprefix("http://").split(":")
+
+    async def several():
+        connection = Connection(host, int(port), timeout=5)
+        statuses = [(await connection.request("GET", "/abc"))[0] for _ in range(5)]
+        connection.close()
+        return statuses
+
+    assert asyncio.run(several()) == [302] * 5
+    assert len(FakeApi.clients) == 1  # five requests, one TCP connection
+
+
+def test_a_post_sends_its_body_and_a_get_reads_a_body(fake_api):
+    host, port = fake_api.removeprefix("http://").split(":")
+
+    async def both():
+        connection = Connection(host, int(port), timeout=5)
+        posted = await connection.request("POST", "/shorten", b'{"url": "https://example.com/"}')
+        metrics = await connection.request("GET", "/metrics")
+        connection.close()
+        return posted, metrics
+
+    posted, metrics = asyncio.run(both())
+
+    assert posted == (201, b"{}")
+    assert metrics[0] == 200 and b"shortlink_cache_lookups_total" in metrics[1]
+
+
+def test_it_reconnects_after_the_server_hangs_up(fake_api):
+    FakeApi.clients = set()
+    FakeApi.close_next = True
+    host, port = fake_api.removeprefix("http://").split(":")
+
+    async def two_requests():
+        connection = Connection(host, int(port), timeout=5)
+        first = (await connection.request("GET", "/abc"))[0]  # answered, then the server closes
+        second = (await connection.request("GET", "/abc"))[0]  # needs a new connection
+        connection.close()
+        return first, second
+
+    assert asyncio.run(two_requests()) == (302, 302)
+    assert len(FakeApi.clients) == 2
+
+
+def test_a_connection_error_is_reported_and_the_next_call_tries_again():
+    connection = Connection("127.0.0.1", 1, timeout=0.5)  # nothing listens on port 1
+
+    # (Windows may time out where Linux would refuse at once, so the error's name is not checked)
+    with pytest.raises(RequestFailed):
+        request(connection)
+    with pytest.raises(RequestFailed):
+        request(connection)  # a second attempt is made (not stuck in a broken state)

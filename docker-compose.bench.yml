@@ -1,0 +1,50 @@
+# Settings for the benchmarks (bench/run_benchmarks.py). Use it on top of the normal file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.bench.yml --profile reference up -d
+#
+# It points the API and the worker at the separate `shortlink_bench` database (see bench/seed.py),
+# lets each run choose its setup through environment variables, and gives the servers equal CPU
+# limits so the comparison is fair. The variables (the runner writes them to an env file):
+#
+#   BENCH_CACHE_URL      where the cache lives: redis://miniredis:6380 (default), redis://redis:6379
+#                        for real Redis, or empty for the in-process cache (or no cache)
+#   BENCH_CACHE_ENABLED  "false" for the no-cache baseline
+#   BENCH_RATE_LIMIT     "true" to switch the rate limiter on (it is off by default here, so the
+#                        cache can be measured on its own)
+#   BENCH_CLICKS         "true" to switch click recording on (off by default, for the same reason)
+
+x-bench-env: &bench-env
+  DATABASE_URL: postgresql+psycopg://shortlink:shortlink@postgres:5432/shortlink_bench
+  MINIREDIS_URL: ${BENCH_CACHE_URL-redis://miniredis:6380}
+  CACHE_ENABLED: ${BENCH_CACHE_ENABLED:-true}
+  RATE_LIMIT_ENABLED: ${BENCH_RATE_LIMIT:-false}
+  CLICKS_ENABLED: ${BENCH_CLICKS:-false}
+  RATE_LIMIT_REQUESTS: "100000000"
+
+services:
+  api:
+    cpus: 2
+    environment: *bench-env
+
+  worker:
+    cpus: 1
+    environment: *bench-env
+
+  miniredis:
+    cpus: 1
+
+  redis:
+    cpus: 1
+
+  # Sends the load, from inside Docker so the numbers do not include Windows' slow forwarding of
+  # ports. It needs nothing but Python (bench/loadtest.py uses only the standard library), so it
+  # runs the project code mounted from here. Run it with:
+  #   docker compose ... run --rm --no-deps loadgen --url http://api:8000
+  loadgen:
+    image: python:3.12-slim
+    profiles: ["tools"]
+    entrypoint: ["python", "-m", "bench.loadtest"]
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    cpus: 4

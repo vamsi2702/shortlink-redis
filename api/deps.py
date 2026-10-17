@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from api import config
 from api.db import SessionLocal
 from api.models import User
-from api.services.cache import Cache, default_cache
+from api.services.cache import Cache, NullCache, default_cache
 from api.services.clicks import ClickQueue, NullClickQueue, RedisClickQueue
 from api.services.metrics import RATE_LIMITED, metrics
 from api.services.ratelimit import allow_request, client_identity
@@ -36,13 +36,15 @@ def _miniredis(url: str) -> tuple[RedisCache, RedisClickQueue]:
 
 
 def get_cache() -> Cache:
+    if not config.CACHE_ENABLED:
+        return NullCache()
     if config.MINIREDIS_URL:
         return _miniredis(config.MINIREDIS_URL)[0]
     return default_cache
 
 
 def get_click_queue() -> ClickQueue:
-    if config.MINIREDIS_URL:
+    if config.CLICKS_ENABLED and config.MINIREDIS_URL:
         return _miniredis(config.MINIREDIS_URL)[1]
     return NullClickQueue()
 
@@ -58,6 +60,8 @@ def rate_limited(scope: str) -> params.Depends:
     """
 
     def check(request: Request, cache: CacheDep) -> None:
+        if not config.RATE_LIMIT_ENABLED:
+            return
         if not allow_request(cache, scope, client_identity(request)):
             metrics.inc(RATE_LIMITED, scope=scope)
             raise HTTPException(

@@ -87,5 +87,31 @@ class InMemoryCache:
         return value
 
 
+class NullCache:
+    """A cache that remembers nothing, for running without one (CACHE_ENABLED=false).
+
+    Every lookup is a miss. The rate limiter's counters live in the cache, so with this class it
+    always counts 1 and never refuses a request.
+    """
+
+    def get(self, key: str) -> str | None:
+        return None
+
+    def set(self, key: str, value: str, ttl: float | None = None) -> None:
+        pass
+
+    def set_nx(self, key: str, value: str, ttl: float) -> bool:
+        return True
+
+    def delete(self, key: str) -> None:
+        pass
+
+    def incr(self, key: str) -> int:
+        return 1
+
+    def expire(self, key: str, ttl: float) -> bool:
+        return True
+
+
 # The one cache shared by the whole running app
 default_cache = InMemoryCache()
