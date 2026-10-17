@@ -165,7 +165,7 @@ def test_a_failed_nx_does_not_touch_the_existing_expiry_or_value(ctx):
 
 
 def test_the_rate_limiter_recipe_set_nx_ex_then_incr(ctx, clock):
-    """Phase 4 uses this: the first request starts a one-minute window, later ones count."""
+    """The API's rate limiter uses this: the first request starts a window, later ones count."""
     assert run(ctx, "SET", "rl:ip", "1", "EX", 60, "NX") == OK
     assert run(ctx, "SET", "rl:ip", "1", "EX", 60, "NX") is None
     clock.advance(20_000)

@@ -43,7 +43,7 @@ class Setup:
 
 SETUPS = {
     "none": Setup("No cache (every redirect asks Postgres)", "", cache_enabled=False),
-    "inprocess": Setup("In-process dict (the Phase 1 cache)", ""),
+    "inprocess": Setup("In-process dict (the original cache)", ""),
     "redis": Setup("Real Redis 7", "redis://redis:6379"),
     "miniredis": Setup("MiniRedis", "redis://miniredis:6380"),
     "redis-full": Setup(

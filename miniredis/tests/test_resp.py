@@ -18,7 +18,7 @@ from miniredis.resp import (
     parse,
 )
 
-# What real Redis 7.4 sent and received, recorded in step 2.3 (see docs/RESP.md).
+# What real Redis 7.4 sent and received, recorded with miniredis/proxy_sniffer.py.
 HELLO_2_REPLY = (
     b"*14\r\n$6\r\nserver\r\n$5\r\nredis\r\n$7\r\nversion\r\n$6\r\n7.4.11\r\n$5\r\nproto\r\n:2\r\n"
     b"$2\r\nid\r\n:105\r\n$4\r\nmode\r\n$10\r\nstandalone\r\n$4\r\nrole\r\n$6\r\nmaster\r\n"
@@ -45,7 +45,7 @@ REAL_REDIS = [
     (b"-ERR unknown command 'FOO', with args beginning with: \r\n",
      RespError("ERR unknown command 'FOO', with args beginning with: ")),
     (HELLO_2_REPLY, HELLO_2_VALUE),
-    # what redis-py sent in step 2.3
+    # what redis-py sent
     (b"*4\r\n$6\r\nCLIENT\r\n$7\r\nSETINFO\r\n$8\r\nLIB-NAME\r\n$8\r\nredis-py\r\n",
      [b"CLIENT", b"SETINFO", b"LIB-NAME", b"redis-py"]),
     (b"*5\r\n$3\r\nSET\r\n$1\r\nk\r\n$1\r\nv\r\n$2\r\nEX\r\n$3\r\n100\r\n",

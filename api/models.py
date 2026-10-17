@@ -24,7 +24,7 @@ class Link(Base):
     # unique=True also creates the index that makes redirect lookups by code fast
     code: Mapped[str] = mapped_column(String(16), unique=True)
     long_url: Mapped[str] = mapped_column(String(2048))
-    # nullable so links can be created before auth exists (step 1.3)
+    # nullable: a link can be created by someone who is not signed in
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

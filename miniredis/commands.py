@@ -1,4 +1,4 @@
-"""Commands: the table that maps a command name to the code that runs it (steps 2.5 to 2.7).
+"""Commands: the table that maps a command name to the code that runs it.
 
 `execute(ctx, words)` takes a parsed command such as [b"SET", b"a", b"1"] and returns a reply
 value that miniredis.resp can encode.
@@ -40,7 +40,7 @@ class ClientState:
     lib_name: bytes | None = None
     lib_ver: bytes | None = None
     close_after_reply: bool = False
-    subscriptions: dict[bytes, None] = field(default_factory=dict)  # channels (step 3.10)
+    subscriptions: dict[bytes, None] = field(default_factory=dict)  # channels it listens to
     # sends bytes to this client out of turn, for published messages; set by the server
     push: Callable[[bytes], bool] | None = None
 
@@ -71,7 +71,7 @@ class Context:
     stats: Stats = field(default_factory=Stats)
     # The server's own facts for INFO (such as its listening port), by section name.
     extra_info: Callable[[], dict[str, dict[str, object]]] | None = None
-    pubsub: PubSub = field(default_factory=PubSub)  # shared by all clients (step 3.10)
+    pubsub: PubSub = field(default_factory=PubSub)  # shared by all clients
 
 
 class CommandError(Exception):
@@ -319,14 +319,14 @@ def incr(ctx: Context, args: list[bytes]) -> object:
 
 @command("incrby", 3)
 def incrby(ctx: Context, args: list[bytes]) -> object:
-    # redis-py sends INCRBY key 1 even for a plain incr() (found in step 2.3)
+    # redis-py sends INCRBY key 1 even for a plain incr() (seen with proxy_sniffer.py)
     amount = parse_int64(args[1])
     if amount is None:
         raise CommandError(NOT_AN_INTEGER)
     return _increment(ctx, args[0], amount)
 
 
-# ---- type and lists (step 3.3) ----------------------------------------------------------------
+# ---- type and lists ---------------------------------------------------------------------------
 
 
 def type_name(value: object | None) -> str:
@@ -425,7 +425,7 @@ def lrange(ctx: Context, args: list[bytes]) -> object:
     return list(islice(items, start, min(stop, size - 1) + 1))
 
 
-# ---- hashes (step 3.4) ------------------------------------------------------------------------
+# ---- hashes -----------------------------------------------------------------------------------
 
 
 def get_hash(ctx: Context, key: bytes, *, create: bool = False) -> dict[bytes, bytes] | None:
@@ -475,7 +475,7 @@ def hgetall(ctx: Context, args: list[bytes]) -> object:
     return [item for pair in fields.items() for item in pair]
 
 
-# ---- expiry (step 3.1) ------------------------------------------------------------------------
+# ---- expiry -----------------------------------------------------------------------------------
 
 
 def _expire_command(
@@ -553,7 +553,7 @@ def persist(ctx: Context, args: list[bytes]) -> object:
     return 1 if ctx.store.persist(args[0]) else 0
 
 
-# ---- the handshake: what clients send when they connect (step 2.7) --------------------------
+# ---- the handshake: what clients send when they connect -------------------------------------
 
 SERVER_NAME = b"miniredis"
 SERVER_VERSION = b"0.1.0"
@@ -670,7 +670,7 @@ def info_(ctx: Context, args: list[bytes]) -> object:
     return render_info(ctx, [arg.decode("utf-8", "replace") for arg in args]).encode()
 
 
-# ---- publish and subscribe (step 3.10) --------------------------------------------------------
+# ---- publish and subscribe --------------------------------------------------------------------
 
 
 @command("subscribe", -2)

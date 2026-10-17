@@ -4,8 +4,8 @@ Each connected client gets one `handle_client` task on a single event loop. The 
 
     bytes from the socket -> RESP parser -> command layer -> RESP encoder -> bytes to the socket
 
-(step 2.2 built the socket part, 2.4 the parser and encoder, 2.5 to 2.7 the commands). Next to the
-clients, a background task runs on the same loop: the expiry cleaner (3.2).
+(resp.py is the parser and encoder, commands.py the commands). Next to the clients, a
+background task runs on the same loop: the expiry cleaner.
 
 MiniRedis keeps everything in memory: when the server stops, the data is gone.
 """
@@ -157,7 +157,7 @@ class MiniRedisServer:
         await handle_client(reader, writer, self)
 
     async def _expire_loop(self) -> None:
-        """Step 3.2: kill expired keys even if nobody ever reads them again."""
+        """Kill expired keys even if nobody ever reads them again."""
         while True:
             try:
                 self.store.purge_expired(limit=EXPIRE_BATCH)

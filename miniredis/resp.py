@@ -1,4 +1,4 @@
-"""RESP (REdis Serialization Protocol): turn bytes into Python values and back (step 2.4).
+"""RESP (REdis Serialization Protocol): turn bytes into Python values and back.
 
 Python value  <->  RESP bytes
     SimpleString("OK")   +OK\\r\\n          a short status

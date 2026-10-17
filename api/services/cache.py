@@ -5,7 +5,8 @@ from typing import Protocol
 
 
 class Cache(Protocol):
-    """The small interface the API needs. In Phase 4 a MiniRedis client implements the same one."""
+    """The small interface the API needs. The in-process cache below and the MiniRedis client
+    (redis_cache.py) both implement it."""
 
     def get(self, key: str) -> str | None: ...
 

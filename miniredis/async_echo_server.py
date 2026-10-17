@@ -1,4 +1,4 @@
-"""An asyncio TCP echo server: many clients at once on a single thread (step 2.2).
+"""An asyncio TCP echo server: many clients at once on a single thread.
 
 Same job as echo_server.py, but a quiet client no longer blocks the others.
 """

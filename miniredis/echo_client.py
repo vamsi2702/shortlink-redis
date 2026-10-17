@@ -1,4 +1,4 @@
-"""A tiny client for the echo server: type a line, see it come back (step 2.1)."""
+"""A tiny client for the echo server: type a line, see it come back."""
 
 import argparse
 import socket

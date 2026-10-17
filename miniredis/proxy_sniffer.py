@@ -1,9 +1,9 @@
-"""A forwarding proxy that prints every byte passing through it (step 2.3).
+"""A forwarding proxy that prints every byte passing through it.
 
     client  <--->  proxy_sniffer (port 6381)  <--->  real Redis (port 6379)
 
 Point any Redis client at port 6381 and watch exactly what it says and what the server answers.
-Handy to learn the handshake `redis-py` performs, which MiniRedis has to understand in step 2.7.
+Handy to learn the handshake `redis-py` performs, which MiniRedis has to understand too.
 
     python -m miniredis.proxy_sniffer --listen-port 6381 --target-port 6379
 """

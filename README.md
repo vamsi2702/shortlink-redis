@@ -1,12 +1,249 @@
 # ShortLink + MiniRedis
 
-A URL shortener backend (FastAPI + PostgreSQL) whose cache, rate limiter and click queue run on a Redis-compatible server written from scratch in Python (MiniRedis).
+A URL shortener (like bit.ly) whose speed-ups run on **MiniRedis**: a small Redis-compatible server
+written from scratch in Python for this project.
 
 [![CI](https://github.com/vamsi2702/shortlink-redis/actions/workflows/ci.yml/badge.svg)](https://github.com/vamsi2702/shortlink-redis/actions/workflows/ci.yml)
 
-See [PLAN.md](PLAN.md) for the plan and [docs/DIAGRAMS.md](docs/DIAGRAMS.md) for diagrams.
+**Status:** complete. The website backend, MiniRedis, the click recording, the measurements and the
+automatic checks are all built and tested. Deploying it to the cloud (Kubernetes, AWS) is an
+optional extra that has not been started; see [PLAN.md](PLAN.md).
 
-**Status:** Phases 1 to 5 are complete: the backend, MiniRedis (protocol, commands, expiry, lists, hashes, Pub/Sub), the API using MiniRedis for caching, rate limiting and a click queue (with a click worker and `/metrics`), and the measurements in [Benchmarks](#benchmarks). Phase 6 (deployment) is optional and not started.
+---
+
+# Start here: what is this project?
+
+## In one minute
+
+You give it a long web address and it gives you a short one. When someone opens the short one, it
+sends them on to the long one.
+
+```
+https://example.com/articles/2026/a-very-long-title-with-many-words   →   http://localhost:8000/JXUQcS
+```
+
+That is a small job, so the project is really about doing it **well**: fast, safe, and still
+working when something breaks. Along the way it builds, from scratch, the tool that most big
+websites use to be fast: a **cache server**. The famous one is called Redis. MiniRedis is our own
+small version of it, so you can see what is inside.
+
+## Three kinds of memory
+
+| What | Think of it as | Lives in | Good at | Bad at |
+|---|---|---|---|---|
+| **PostgreSQL** (the database) | a filing cabinet in the basement | the disk | keeping everything for ever | slow to fetch from |
+| **MiniRedis as a cache** | sticky notes on your desk | memory (RAM) | answering instantly | forgets everything when switched off |
+| **MiniRedis as a queue** | an inbox tray | memory (RAM) | collecting jobs to do a moment later | forgets them if switched off |
+
+The cache and the queue are both MiniRedis, just used for different jobs.
+
+## The picture
+
+```
+                     ┌──────────────────────────────────────┐
+  browser ──────────►│  the API (FastAPI)          api/     │
+  "open /JXUQcS"     │  checks limits, finds the long link  │
+                     └───────┬──────────────────────┬───────┘
+                             │ slow, permanent      │ fast, forgetful
+                             ▼                      ▼
+                     ┌──────────────┐        ┌────────────────┐
+                     │  PostgreSQL  │        │   MiniRedis    │
+                     │  links       │        │   cache        │
+                     │  users       │        │   counters     │
+                     │  clicks      │        │   click queue  │
+                     └──────▲───────┘        └───────┬────────┘
+                            │  saves clicks          │ takes clicks out
+                            │  100 at a time         │ every second
+                            └───────── click worker ◄┘
+                                       api/worker.py
+```
+
+## What happens when someone opens a short link
+
+1. The request reaches the API (`api/routes/redirect.py`).
+2. **Rate limit.** The API counts how many requests this visitor made in the last minute (the
+   counter lives in MiniRedis). Over 100 and the answer is `429 Too many requests`.
+3. **Look at the sticky notes.** The API asks MiniRedis for `link:JXUQcS`.
+   - **Hit**: it is there, so we already know the long address. Postgres is skipped.
+   - **Miss**: the API asks Postgres, then leaves a sticky note in MiniRedis for 5 minutes.
+4. **Drop a note in the inbox.** The API pushes "someone opened JXUQcS at this moment" onto a list
+   called `clicks`. That takes a fraction of a millisecond, so the visitor never waits for the
+   database.
+5. The API answers `302 go to <the long address>`, and the browser jumps there.
+6. Meanwhile the **click worker** (a separate small program, `api/worker.py`) empties the inbox
+   every second or so and saves up to 100 clicks at once into Postgres.
+
+*Why a queue?* Writing to the database on every single click would put slow work on the busiest
+path of the whole system. Dropping a note in an inbox is nearly free.
+
+## What happens when someone creates a link
+
+The API checks the address is allowed (`http` or `https`, nothing pointing at private networks),
+invents a random 6-letter code, saves the pair in Postgres (if the code is already taken it just
+tries another), forgets any cached "no such link" for that code, and returns the short address.
+
+## What if MiniRedis dies?
+
+The website keeps working. The API notices, stops asking MiniRedis for 5 seconds (so it does not
+waste time waiting for a dead server), and reads from Postgres instead. Visitors see nothing wrong.
+The price: clicks during that time are not recorded, because MiniRedis keeps everything in memory.
+This was tested by killing it under load; the numbers are in [Benchmarks](#benchmarks).
+
+## MiniRedis in plain words
+
+- Redis is a server you talk to over the network with short commands: `SET name vamsi` stores
+  something, `GET name` fetches it. MiniRedis understands about 30 of the most-used commands, so
+  real tools (`redis-cli`, Python's `redis` library) work with it unchanged.
+- On the wire a command is just bytes in an agreed format called **RESP**. `SET name vamsi` is sent as
+
+  ```
+  *3\r\n$3\r\nSET\r\n$4\r\nname\r\n$5\r\nvamsi\r\n
+   │    │                          └ "next word has 5 letters: vamsi"
+   │    └ "next word has 3 letters: SET"
+   └ "a command of 3 words follows"            (\r\n is just a line break)
+  ```
+
+- **What happens inside** when a command arrives:
+
+  ```
+  bytes in ─► resp.py ─► commands.py ─► store.py ─► resp.py ─► bytes out
+              (read)     (which command?) (the data)  (write the reply)
+  ```
+
+  `server.py` is the part that handles the network connections.
+- **The heart is a Python dictionary** (`store.py`). Everything else makes it behave like Redis:
+  keys that expire, lists (used for the click queue), hashes, publish/subscribe, and an `INFO`
+  report.
+- **One thread, no waiting.** MiniRedis serves every client from a single thread and never pauses
+  in the middle of a command, so two commands can never get in each other's way. That is why
+  `INCR` cannot lose a count even though there are no locks. (We also built the "one thread per
+  client" version to compare; it was slower, see [Benchmarks](#benchmarks).)
+
+## A map of the folders
+
+```
+shortlink-redis/
+├── api/                      the website's backend (FastAPI)
+│   ├── main.py               starts the app and lists the routes
+│   ├── routes/               one file per group of URLs
+│   │   ├── redirect.py       opening a short link (the most important one)
+│   │   ├── links.py          creating, listing, editing and deleting links
+│   │   ├── auth.py           registering and signing in
+│   │   ├── metrics.py        the numbers at /metrics
+│   │   └── frontend.py       the simple web page at /
+│   ├── services/             the logic that the routes call
+│   │   ├── links.py          look a link up (cache first), create one
+│   │   ├── cache.py          the cache interface and the in-process cache
+│   │   ├── redis_cache.py    the same interface, backed by MiniRedis, with the safety net
+│   │   ├── ratelimit.py      the "100 per minute" rule
+│   │   ├── clicks.py         the click queue, and saving clicks to Postgres
+│   │   ├── codes.py          random short codes        urls.py   which addresses are allowed
+│   │   └── security.py, users.py   passwords and sign-in
+│   ├── models.py             the three database tables: users, links, clicks
+│   ├── worker.py             the click worker
+│   ├── config.py             every setting, read from environment variables
+│   ├── migrations/           step-by-step changes to the tables (Alembic)
+│   └── static/index.html     a plain web page to try it from a browser
+├── miniredis/                our own Redis, written from scratch
+│   ├── resp.py               the byte format: turns bytes into Python values and back
+│   ├── store.py              the dictionary, and how keys expire
+│   ├── commands.py           the table of commands and the code for each
+│   ├── server.py             the network part: accepts clients, one thread for all
+│   ├── pubsub.py, info.py    publish/subscribe, and the INFO report
+│   ├── echo_*.py             small first versions, kept for learning: they show why a server that
+│   │                         handles one client at a time blocks, and how asyncio fixes it
+│   ├── resp_explorer.py, proxy_sniffer.py   tools that show the raw bytes real Redis sends
+│   └── threaded_server.py    the "one thread per client" experiment
+├── bench/                    everything for measuring: dataset, load tester, experiments, results/
+├── docker-compose.yml        run the whole system with one command
+├── .github/workflows/ci.yml  automatic checks on every push
+└── PLAN.md                   the plan this was built from
+```
+
+## Words you will meet
+
+| Word | Meaning here |
+|---|---|
+| **Cache** | a fast copy of something slow to fetch, kept nearby. Here: the long address for a code |
+| **Hit / miss** | the answer was in the cache / it was not. **Hit ratio** is the share of hits |
+| **TTL** | "time to live": how long a cached note stays before it is thrown away (5 minutes here) |
+| **Queue** | things waiting to be dealt with later, in order. Here: the clicks |
+| **Worker** | a program that works through a queue in the background |
+| **Rate limit** | a cap on how often one visitor may ask. Over it, the answer is HTTP `429` |
+| **RESP** | the byte format Redis and MiniRedis use to talk over the network |
+| **Atomic** | happens completely or not at all; nothing can interrupt halfway |
+| **asyncio / event loop** | one thread that serves many clients by never waiting around |
+| **Circuit breaker** | after a failure, stop trying for a few seconds instead of waiting on a dead server every time |
+| **Fallback** | the plan B: Postgres, when the cache is down |
+| **Latency, p50, p99** | how long one request takes. p50 is the typical one; p99 is the slow one in a hundred |
+| **Throughput** | how many requests are handled per second |
+| **Zipf** | the shape of real traffic: a few links get most of the visits |
+
+## Try it in five minutes
+
+You need Docker Desktop running. These are PowerShell commands (on Mac or Linux, use `curl`
+where it says `curl.exe`).
+
+```powershell
+docker compose up -d --build     # starts PostgreSQL, MiniRedis, the API and the click worker
+docker compose up -d redis       # a real Redis, only used here as a "second opinion" tool
+
+# 1. make a short link
+$link = Invoke-RestMethod -Method Post -Uri http://localhost:8000/shorten -ContentType 'application/json' -Body '{"url":"https://example.com/a/very/long/page"}'
+$link.short_url
+
+# 2. open it: look for "302 Found" and the "location:" line
+curl.exe -i $link.short_url
+
+# 3. ask MiniRedis what it remembers: the long address, and how many seconds it will keep it
+docker compose exec redis redis-cli -h miniredis -p 6380 GET "link:$($link.code)"
+docker compose exec redis redis-cli -h miniredis -p 6380 TTL "link:$($link.code)"
+
+# 4. a few seconds later the click has travelled queue -> worker -> Postgres
+docker compose exec postgres psql -U shortlink -d shortlink -c "select count(*) from clicks"
+
+# 5. the counters the API keeps (cache hits and misses, clicks queued)
+curl.exe -s http://localhost:8000/metrics
+```
+
+You can also open http://localhost:8000 for a plain web page, or http://localhost:8000/docs for
+the interactive API documentation. `docker compose down` stops everything.
+
+## How to read the code
+
+Read in the order the data flows, and run the tests of each file as you go.
+
+1. **`miniredis/resp.py`**: how bytes become commands and replies. Start here.
+2. **`miniredis/store.py`**: the dictionary and expiry.
+3. **`miniredis/commands.py`**: the table of commands. Read `set_`, `get` and `_increment` first.
+4. **`miniredis/server.py`**: how many clients are served by one thread.
+5. **`api/config.py`, `api/models.py`**: the settings and the three tables.
+6. **`api/services/links.py`**, then **`api/routes/redirect.py`**: the cache-then-database lookup.
+7. **`api/services/redis_cache.py`**: the cache on MiniRedis, and what happens when it is down.
+8. **`api/services/ratelimit.py`**, **`clicks.py`**, **`api/worker.py`**: the limiter and the queue.
+9. **`bench/`** last: how the measurements were made.
+
+The tests show how each piece is meant to be used. `miniredis/tests/test_commands_basic.py` is a
+good first one.
+
+## What measuring it taught
+
+- **Caching helped, but only by about a fifth.** The slow part of this website turned out to be
+  the website's own Python code, not the database. Measure before you optimise.
+- **MiniRedis is about 4 times slower than real Redis** in a direct race. Inside the website the
+  difference mostly disappears, because the website takes milliseconds and the cache only
+  microseconds.
+- **One thread with asyncio beat "one thread per client" by 2 to 3 times.** In Python, extra
+  threads do not run in parallel, so they only add switching.
+- **Killing the cache did not break the website**: 0 failed requests out of about 20,000. But the
+  test exposed a real bug (8-second stalls), which is now fixed.
+- **My own measuring tools were wrong at first**, twice. Check your tools before you trust their
+  numbers.
+
+---
+
+Everything below is reference material: how to run and test it, the commands MiniRedis supports,
+the API, the full benchmark results and the settings.
 
 ## Run everything
 
@@ -16,13 +253,6 @@ docker compose up -d --build   # PostgreSQL, MiniRedis, the API, the click worke
 
 The API is then at http://localhost:8000 (interactive docs at `/docs`, numbers at `/metrics`).
 `docker compose down` stops it; the database keeps its data, MiniRedis does not (it is memory only).
-
-```
-browser ──► API ──► MiniRedis   cache (GET/SET), rate limit (SET NX + INCR), click queue (LPUSH)
-             │          ▲
-             ▼          │ RPOP in batches
-         PostgreSQL ◄── click worker
-```
 
 ## Setup for development
 
@@ -62,7 +292,7 @@ modules are `commands.py` 99%, `resp.py` 98%, `store.py` 97% and `server.py` 86%
 
 ## MiniRedis
 
-A Redis-compatible server written from scratch (see [PLAN.md](PLAN.md), Phases 2 and 3).
+A Redis-compatible server written from scratch (the plan is in [PLAN.md](PLAN.md)).
 
 ```powershell
 python -m miniredis.server            # listens on 127.0.0.1:6380
@@ -165,7 +395,7 @@ Windows' slow forwarding of ports into Docker. The raw results are in [bench/res
 | Setup | Hit ratio | 1 client: p50 / p99 ms | 32 clients: req/s | 32 clients: p50 / p99 ms |
 |---|---:|---|---:|---|
 | No cache (every redirect asks Postgres) | 0% | 5.06 / 12.35 | 169 | 182 / 336 |
-| In-process dict (the Phase 1 cache) | 70% | 4.34 / 13.44 | 179 | 162 / 351 |
+| In-process dict (the original cache) | 70% | 4.34 / 13.44 | 179 | 162 / 351 |
 | Real Redis 7 | 78% | 3.86 / 11.80 | 203 | 148 / 310 |
 | MiniRedis | 78% | 3.96 / 12.75 | 188 | 157 / 334 |
 

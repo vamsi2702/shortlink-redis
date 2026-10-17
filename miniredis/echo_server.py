@@ -1,6 +1,7 @@
-"""A plain blocking TCP echo server: the simplest possible network server (step 2.1).
+"""A plain blocking TCP echo server: the simplest possible network server.
 
-It sends back whatever bytes it receives. It serves ONE client at a time; step 2.2 fixes that.
+It sends back whatever bytes it receives. It serves ONE client at a time; async_echo_server.py
+fixes that.
 """
 
 import argparse

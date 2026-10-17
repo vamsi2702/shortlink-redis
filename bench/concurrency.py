@@ -1,4 +1,4 @@
-"""The concurrency experiment (step 5.5): asyncio against thread-per-connection, at 10, 100 and
+"""The concurrency experiment: asyncio against thread-per-connection, at 10, 100 and
 1,000 simultaneous connections, with real Redis as the reference.
 
     python -m bench.concurrency                  # needs Docker running

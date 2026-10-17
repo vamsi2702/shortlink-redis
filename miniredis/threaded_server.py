@@ -1,4 +1,4 @@
-"""A thread-per-connection MiniRedis, for the concurrency experiment (step 5.5). Not the real one.
+"""A thread-per-connection MiniRedis, for the concurrency experiment. Not the real one.
 
     python -m miniredis.threaded_server --port 6381
 

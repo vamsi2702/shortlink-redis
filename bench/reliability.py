@@ -1,4 +1,4 @@
-"""The reliability test (step 5.4): kill MiniRedis in the middle of a load test.
+"""The reliability test: kill MiniRedis in the middle of a load test.
 
     python -m bench.reliability                  # needs Docker; about 12 minutes for 3 repeats
 

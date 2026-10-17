@@ -1,6 +1,6 @@
 """Send one command to a Redis-compatible server and show the raw bytes in both directions.
 
-A learning tool for step 2.3. Point it at real Redis (port 6379) now, at MiniRedis later.
+A learning tool. Point it at real Redis (port 6379) now, at MiniRedis later.
 
     python -m miniredis.resp_explorer SET a 1
     python -m miniredis.resp_explorer --compact GET a

@@ -70,7 +70,7 @@ def test_server_survives_a_client_that_crashes(server):
 
 
 def test_blocking_server_makes_a_second_client_wait(server):
-    """The limitation step 2.2 removes: one slow client blocks everyone behind it."""
+    """The limitation the asyncio server removes: one slow client blocks everyone behind it."""
     first = connect(server)
     assert echo(first, "ping") == "ping"  # the server is now busy serving `first`
 

@@ -1,5 +1,5 @@
 """Publish/Subscribe: clients subscribe to named channels, and the server pushes them every
-message published there (step 3.10).
+message published there.
 
 Nothing is stored: a message goes to whoever is subscribed at that moment, and is then gone. A
 client that was not subscribed never sees it. (That is why the click events of this project use a

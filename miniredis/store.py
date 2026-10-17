@@ -1,7 +1,7 @@
 """The keyspace: one dictionary from key to value (the heart of MiniRedis).
 
-Keys are `bytes`, because Redis keys are binary safe. Values are `bytes` (strings) here; lists
-and hashes are added in steps 3.3 and 3.4.
+Keys are `bytes`, because Redis keys are binary safe. Values are `bytes` (strings), a
+`deque` (lists) or a `dict` (hashes).
 
 Expiry: a second dictionary, `_expires`, maps a key to the moment it dies, as a unix time in
 milliseconds. Every access first checks whether that moment has passed and, if so, removes the key

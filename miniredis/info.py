@@ -1,4 +1,4 @@
-"""The INFO command: a text report of how the server is doing (step 3.8).
+"""The INFO command: a text report of how the server is doing.
 
 The layout is real Redis's: a "# Section" line, then one "field:value" line per fact, sections
 separated by a blank line and always in the same order. Clients such as redis-py read it.
