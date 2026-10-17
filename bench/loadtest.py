@@ -29,6 +29,8 @@ from bench.workload import DEFAULT_WRITE_RATIO, PATTERNS, Workload
 
 EXPECTED_STATUS = {"read": 302, "write": 201}
 HEADER_END = b"\r\n\r\n"
+WINDOW_MARKER = "WINDOW-STARTED"
+Counts = tuple[float, float] | None  # (cache hits, misses) read from /metrics, or None
 
 
 @dataclass
@@ -45,6 +47,8 @@ class Result:
     max_ms: float
     cache_hit_ratio: float | None  # taken from the API's /metrics; None if it could not be read
     statuses: dict[str, int] = field(default_factory=dict)
+    # one entry per second of the measured window, only when a timeline was asked for
+    timeline: list[dict] | None = None
 
 
 @dataclass
@@ -54,6 +58,9 @@ class Window:
     sent: int = 0
     start: float | None = None  # measuring begins here (None while warming up)
     end: float = float("inf")  # clients stop sending at this time
+    # for a timeline: (seconds after the window opened, how long it took, whether it failed) for
+    # every measured request; None when no timeline was asked for
+    samples: list[tuple[float, float, bool]] | None = None
 
 
 class RequestFailed(Exception):
@@ -166,6 +173,8 @@ async def one_client(
             statuses[status] += 1
             latencies.append(elapsed)
             errors += failed
+            if window.samples is not None:
+                window.samples.append((started - window.start, elapsed, failed))
     return latencies, statuses, errors
 
 
@@ -175,8 +184,12 @@ async def coordinate(
     duration: float,
     warmup_requests: int,
     warmup_seconds: float,
-) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
-    """Wait out the warm-up, open the measured window, and read the cache counters at both ends."""
+    timeline: bool = False,
+) -> tuple[Counts, Counts, list[Counts]]:
+    """Wait out the warm-up, open the measured window, and read the cache counters at both ends.
+
+    With `timeline`, also read them at the end of every second (the third value returned) and
+    print WINDOW-STARTED to stderr the moment measuring begins, for a script that is watching."""
     began = time.perf_counter()
     while (
         window.sent < warmup_requests
@@ -187,9 +200,16 @@ async def coordinate(
     before = await cache_counts(monitor)
     window.start = time.perf_counter()
     window.end = window.start + duration
-    await asyncio.sleep(duration + 0.1)  # the extra moment lets the last requests finish
+    per_second: list[Counts] = [before]
+    if timeline:
+        window.samples = []
+        print(WINDOW_MARKER, file=sys.stderr, flush=True)
+        for second in range(1, int(duration) + 1):
+            await asyncio.sleep(max(0.0, window.start + second - time.perf_counter()))
+            per_second.append(await cache_counts(monitor))
+    await asyncio.sleep(max(0.0, window.end + 0.1 - time.perf_counter()))  # let the last finish
     after = await cache_counts(monitor)
-    return before, after
+    return before, after, per_second
 
 
 async def run_load(
@@ -203,9 +223,10 @@ async def run_load(
     write_ratio: float = DEFAULT_WRITE_RATIO,
     timeout: float = 10.0,
     warmup_requests: int = 0,
+    timeline: bool = False,
 ) -> Result:
     """Run one load test. The warm-up is `warmup_requests` requests if that is given, otherwise
-    `warmup` seconds."""
+    `warmup` seconds. With `timeline`, the result also has a per-second breakdown."""
     url = urlsplit(base_url)
     host, port = url.hostname or "localhost", url.port or 80
     window = Window()
@@ -216,7 +237,9 @@ async def run_load(
         asyncio.create_task(one_client(connection, workload, window))
         for connection, workload in zip(connections, workloads, strict=True)
     ]
-    before, after = await coordinate(monitor, window, duration, warmup_requests, warmup)
+    before, after, per_second = await coordinate(
+        monitor, window, duration, warmup_requests, warmup, timeline
+    )
     outputs = await asyncio.gather(*tasks)
     for connection in (*connections, monitor):
         connection.close()
@@ -242,7 +265,36 @@ async def run_load(
         max_ms=(latencies[-1] if latencies else 0.0) * 1000,
         cache_hit_ratio=hit_ratio,
         statuses=dict(statuses),
+        timeline=build_timeline(window.samples, per_second) if timeline else None,
     )
+
+
+def build_timeline(
+    samples: list[tuple[float, float, bool]] | None, per_second: list[Counts]
+) -> list[dict]:
+    """Group the measured requests into seconds. For each second: how many requests started in it,
+    how many failed, their median and 99th percentile latency, and the cache hits and misses the
+    API counted during it (the difference between two readings of /metrics)."""
+    seconds: dict[int, list[tuple[float, bool]]] = {}
+    for offset, elapsed, failed in samples or []:
+        seconds.setdefault(int(offset), []).append((elapsed, failed))
+    timeline = []
+    for second in range(len(per_second) - 1):
+        entries = seconds.get(second, [])
+        latencies = sorted(elapsed for elapsed, _ in entries)
+        start, end = per_second[second], per_second[second + 1]
+        timeline.append(
+            {
+                "t": second,
+                "requests": len(entries),
+                "errors": sum(failed for _, failed in entries),
+                "p50_ms": percentile(latencies, 50) * 1000,
+                "p99_ms": percentile(latencies, 99) * 1000,
+                "hits": end[0] - start[0] if start and end else 0,
+                "misses": end[1] - start[1] if start and end else 0,
+            }
+        )
+    return timeline
 
 
 def format_result(result: Result) -> str:
@@ -268,6 +320,7 @@ def main() -> None:
     parser.add_argument("--links", type=int, default=dataset.DEFAULT_LINKS)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--write-ratio", type=float, default=DEFAULT_WRITE_RATIO)
+    parser.add_argument("--timeline", action="store_true", help="also report every second")
     parser.add_argument("--json", help="write the result to this file; '-' prints only the JSON")
     args = parser.parse_args()
 
@@ -282,6 +335,7 @@ def main() -> None:
             args.seed,
             args.write_ratio,
             warmup_requests=args.warmup_requests,
+            timeline=args.timeline,
         )
     )
     if args.json == "-":

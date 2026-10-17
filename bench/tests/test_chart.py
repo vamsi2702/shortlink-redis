@@ -5,9 +5,9 @@ from bench import chart
 NS = "{http://www.w3.org/2000/svg}"
 
 
-def parse(fragment: str):
-    """The fragment inside an <svg> wrapper, parsed (so it must be well-formed XML)."""
-    return ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{fragment}</svg>")
+def parse(panel):
+    """A panel's drawing inside an <svg> wrapper, parsed (so it must be well-formed XML)."""
+    return ET.fromstring(f"<svg xmlns='http://www.w3.org/2000/svg'>{panel.svg}</svg>")
 
 
 def texts(root) -> list[str]:
@@ -15,14 +15,14 @@ def texts(root) -> list[str]:
 
 
 def test_a_line_chart_has_one_line_per_series_and_labels_it():
-    fragment = chart.line_chart(
+    panel = chart.line_chart(
         "Title",
         {"alpha": [(1, 10), (2, 20)], "beta": [(1, 5), (2, 30)]},
         "x axis",
         "y axis",
     )
 
-    root = parse(fragment)
+    root = parse(panel)
 
     assert len(list(root.iter(f"{NS}polyline"))) == 2
     assert {"Title", "alpha", "beta", "x axis", "y axis"} <= set(texts(root))
@@ -106,13 +106,13 @@ def test_axes_end_on_a_round_number():
 
 def test_a_document_is_a_valid_svg_file(tmp_path):
     path = tmp_path / "out.svg"
-    panel = chart.line_chart("t", {"a": [(1, 1), (2, 2)]}, "x", "y")
+    panel = chart.line_chart("t", {"a": [(1, 1), (2, 2)]}, "x", "y", height=300)
 
-    chart.document([(panel, 640, 340), (panel, 640, 340)], path)
+    chart.document([panel, panel], path)
 
     root = ET.parse(path).getroot()
     assert root.tag == f"{NS}svg"
-    assert root.get("viewBox") == "0 0 640 680"
+    assert root.get("viewBox") == "0 0 640 600"
     assert len(list(root.iter(f"{NS}g"))) == 2
 
 
@@ -148,3 +148,96 @@ def test_round_numbers_have_no_trailing_zeros():
     assert chart._number(20.0) == "20"
     assert chart._number(0.5) == "0.5"
     assert chart._number(100) == "100"
+
+
+# ---- layout: nothing overlaps, nothing is drawn outside its panel --------------------------------
+
+
+def y_values(root) -> list[float]:
+    """Every vertical position drawn in a panel."""
+    found = []
+    for element in root.iter():
+        for attribute in ("y", "y1", "y2", "cy"):
+            if element.get(attribute) is not None:
+                found.append(float(element.get(attribute)))
+        if element.tag == f"{NS}polyline":
+            found += [float(pair.split(",")[1]) for pair in element.get("points").split()]
+    return found
+
+
+def test_everything_is_drawn_inside_the_panel_it_belongs_to():
+    """The bug this guards against: a chart drawn taller than the space it was given, so it ran
+    into the chart below it."""
+    for height in (260, 300, 340):
+        root = parse(chart.line_chart("t", {"a": [(0, 1), (60, 9)]}, "seconds", "y", height=height))
+
+        assert max(y_values(root)) <= height
+
+    for height in (280, 340):
+        root = parse(chart.bar_chart("t", ["a", "b"], {"x": [1.0, 2.0]}, "y", height=height))
+
+        assert max(y_values(root)) <= height
+
+
+def test_a_panel_says_how_big_it_is_and_the_document_gives_it_that_space(tmp_path):
+    short = chart.line_chart("t", {"a": [(1, 1), (2, 2)]}, "x", "y", height=200)
+    tall = chart.line_chart("t", {"a": [(1, 1), (2, 2)]}, "x", "y", height=350)
+    path = tmp_path / "out.svg"
+
+    chart.document([short, tall], path)
+
+    root = ET.parse(path).getroot()
+    offsets = [group.get("transform") for group in root.iter(f"{NS}g")]
+    assert offsets == [
+        "translate(0 0)",
+        "translate(0 200)",
+    ]  # the second starts where the first ends
+    assert root.get("viewBox") == "0 0 640 550"
+
+
+def test_a_time_axis_has_round_tick_marks():
+    assert chart._nice_ticks(0, 119) == [0, 20, 40, 60, 80, 100]
+    assert chart._nice_ticks(0, 60) == [0, 10, 20, 30, 40, 50, 60]
+    assert chart._nice_ticks(5, 5) == [5]
+
+
+def test_the_time_axis_labels_are_not_fractions():
+    height = 300
+    root = parse(chart.line_chart("t", {"a": [(0, 1), (119, 2)]}, "seconds", "y", height=height))
+    tick_row = height - chart.MARGIN["bottom"] + 18  # where the x-axis tick labels are written
+
+    ticks = [t.text for t in root.iter(f"{NS}text") if abs(float(t.get("y")) - tick_row) < 0.5]
+
+    assert ticks == ["0", "20", "40", "60", "80", "100"]
+
+
+def test_two_markers_close_together_do_not_write_over_each_other():
+    root = parse(
+        chart.line_chart(
+            "t", {"a": [(0, 1), (120, 2)]}, "x", "y", markers=[(15, "killed"), (30, "restarted")]
+        )
+    )
+
+    heights = {
+        t.text: float(t.get("y"))
+        for t in root.iter(f"{NS}text")
+        if t.text in {"killed", "restarted"}
+    }
+
+    assert heights["killed"] != heights["restarted"]
+
+
+def test_a_marker_near_the_right_edge_writes_to_its_left():
+    root = parse(chart.line_chart("t", {"a": [(0, 1), (100, 2)]}, "x", "y", markers=[(98, "late")]))
+
+    label = next(t for t in root.iter(f"{NS}text") if t.text == "late")
+
+    assert label.get("text-anchor") == "end"
+
+
+def test_a_single_line_has_no_label_of_its_own_but_several_do():
+    one = parse(chart.line_chart("t", {"only": [(1, 1), (2, 2)]}, "x", "y"))
+    two = parse(chart.line_chart("t", {"a": [(1, 1), (2, 2)], "b": [(1, 2), (2, 3)]}, "x", "y"))
+
+    assert "only" not in texts(one)
+    assert {"a", "b"} <= set(texts(two))

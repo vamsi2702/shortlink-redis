@@ -7,8 +7,10 @@ import pytest
 
 from bench import dataset
 from bench.loadtest import (
+    WINDOW_MARKER,
     Connection,
     RequestFailed,
+    build_timeline,
     counter_value,
     format_result,
     percentile,
@@ -295,3 +297,55 @@ def test_a_connection_error_is_reported_and_the_next_call_tries_again():
         request(connection)
     with pytest.raises(RequestFailed):
         request(connection)  # a second attempt is made (not stuck in a broken state)
+
+
+# ---- the per-second timeline --------------------------------------------------------------------
+
+
+def test_samples_are_grouped_into_seconds():
+    samples = [
+        (0.1, 0.010, False),
+        (0.9, 0.030, False),
+        (1.2, 0.020, True),  # a failed request in the second second
+        (2.5, 0.040, False),
+    ]
+    readings = [(0.0, 0.0), (10.0, 5.0), (10.0, 5.0), (40.0, 5.0)]  # hits and misses at each second
+
+    timeline = build_timeline(samples, readings)
+
+    assert [s["t"] for s in timeline] == [0, 1, 2]
+    assert [s["requests"] for s in timeline] == [2, 1, 1]
+    assert [s["errors"] for s in timeline] == [0, 1, 0]
+    assert timeline[0]["p50_ms"] == pytest.approx(10)  # nearest rank: the lower of two
+    assert (timeline[0]["hits"], timeline[0]["misses"]) == (10, 5)
+    assert (timeline[1]["hits"], timeline[1]["misses"]) == (0, 0)
+    assert (timeline[2]["hits"], timeline[2]["misses"]) == (30, 0)
+
+
+def test_a_second_with_no_requests_is_still_listed():
+    timeline = build_timeline([(0.5, 0.01, False)], [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])
+
+    assert [s["requests"] for s in timeline] == [1, 0]
+    assert timeline[1]["p50_ms"] == 0 and timeline[1]["p99_ms"] == 0
+
+
+def test_a_missing_metrics_reading_gives_zero_hits_not_a_crash():
+    timeline = build_timeline([(0.5, 0.01, False)], [None, (5.0, 5.0)])
+
+    assert (timeline[0]["hits"], timeline[0]["misses"]) == (0, 0)
+
+
+def test_a_timeline_covers_every_second_and_every_request(fake_api, capsys):
+    result = load(fake_api, write_ratio=0.0, duration=2, warmup=0.1, timeline=True)
+
+    assert [s["t"] for s in result.timeline] == [0, 1]
+    assert sum(s["requests"] for s in result.timeline) == result.requests
+    assert all(s["hits"] > 0 for s in result.timeline)  # the fake server counts three hits per GET
+    assert WINDOW_MARKER in capsys.readouterr().err
+
+
+def test_there_is_no_timeline_unless_asked_for(fake_api, capsys):
+    result = load(fake_api, write_ratio=0.0)
+
+    assert result.timeline is None
+    assert WINDOW_MARKER not in capsys.readouterr().err

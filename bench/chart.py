@@ -1,17 +1,25 @@
 """Draw the benchmark results as SVG charts, with no plotting library.
 
-Each chart function returns an SVG fragment for one panel; `document` puts panels in a file.
+Each chart function returns a Panel: an SVG fragment together with its own width and height, so
+the size a chart was drawn at and the space `document` reserves for it can never disagree.
 Series are told apart by colour AND by a direct label, so the colours are never the only clue.
 """
 
 import math
 from html import escape
 from pathlib import Path
+from typing import NamedTuple
 
 PALETTE = ["#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2", "#be123c"]
 TEXT, MUTED, GRID = "#1f2937", "#6b7280", "#e5e7eb"
 FONT = "font-family='system-ui, -apple-system, Segoe UI, sans-serif'"
 MARGIN = {"left": 64, "right": 24, "top": 40, "bottom": 52}
+
+
+class Panel(NamedTuple):
+    svg: str  # the drawing, positioned inside a box of `width` x `height`
+    width: int
+    height: int
 
 
 def _number(value: float) -> str:
@@ -34,6 +42,21 @@ def _nice_max(value: float) -> float:
     return 10 * step
 
 
+def _nice_ticks(low: float, high: float, target: int = 6) -> list[float]:
+    """Round numbers between `low` and `high` (20, 40, 60, ...) to put labels on."""
+    if high <= low:
+        return [low]
+    wanted = (high - low) / target
+    magnitude = 10 ** math.floor(math.log10(wanted))
+    step = next(m * magnitude for m in (1, 2, 2.5, 5, 10) if m * magnitude >= wanted)
+    tick = math.ceil(low / step) * step
+    ticks = []
+    while tick <= high + step * 1e-9:
+        ticks.append(round(tick, 10))
+        tick += step
+    return ticks
+
+
 def _text(
     x: float,
     y: float,
@@ -51,28 +74,14 @@ def _text(
     )
 
 
-def _frame(title: str, ylabel: str, xlabel: str, width: int, height: int, top: float) -> list[str]:
-    parts = [_text(width / 2, 22, title, 15, weight="600")]
-    parts.append(
-        _text(
-            16,
-            MARGIN["top"] + (height - MARGIN["top"] - MARGIN["bottom"]) / 2,
-            ylabel,
-            11,
-            fill=MUTED,
-            rotate=-90,
-        )
-    )
-    parts.append(
-        _text(
-            MARGIN["left"] + (width - MARGIN["left"] - MARGIN["right"]) / 2,
-            height - 8,
-            xlabel,
-            11,
-            fill=MUTED,
-        )
-    )
-    return parts
+def _frame(title: str, ylabel: str, xlabel: str, width: int, height: int) -> list[str]:
+    plot_height = height - MARGIN["top"] - MARGIN["bottom"]
+    plot_width = width - MARGIN["left"] - MARGIN["right"]
+    return [
+        _text(width / 2, 22, title, 15, weight="600"),
+        _text(16, MARGIN["top"] + plot_height / 2, ylabel, 11, fill=MUTED, rotate=-90),
+        _text(MARGIN["left"] + plot_width / 2, height - 8, xlabel, 11, fill=MUTED),
+    ]
 
 
 def _y_axis(
@@ -95,9 +104,9 @@ def line_chart(
     log_x: bool = False,
     markers: list[tuple[float, str]] | None = None,
     width: int = 640,
-    height: int = 340,
+    height: int = 300,
     unit: str = "",
-) -> str:
+) -> Panel:
     """Lines through (x, y) points. `markers` are vertical lines with a label, e.g. an outage."""
     x0, x1 = MARGIN["left"], width - MARGIN["right"]
     y0, y1 = MARGIN["top"], height - MARGIN["bottom"]
@@ -113,16 +122,26 @@ def line_chart(
     def py(y: float) -> float:
         return y1 - (y1 - y0) * y / top
 
-    parts = _frame(title, ylabel, xlabel, width, height, y0) + _y_axis(top, x0, x1, y0, y1, unit)
-    ticks = sorted(set(xs)) if log_x else [lo + span * i / 6 for i in range(7)]
+    parts = _frame(title, ylabel, xlabel, width, height) + _y_axis(top, x0, x1, y0, y1, unit)
+    ticks = sorted(set(xs)) if log_x else _nice_ticks(min(xs), max(xs))
     for x in ticks:
         parts.append(_text(px(x), y1 + 18, _number(x), 11, fill=MUTED))
-    for x, label in markers or []:
+    for index, (x, label) in enumerate(markers or []):
         parts.append(
             f"<line x1='{px(x):.1f}' x2='{px(x):.1f}' y1='{y0}' y2='{y1}' stroke='{MUTED}' "
             f"stroke-dasharray='4 3'/>"
         )
-        parts.append(_text(px(x) + 4, y0 + 12, label, 11, "start", MUTED))
+        near_right_edge = px(x) > x1 - 120
+        parts.append(  # staggered, so two close markers do not write over each other
+            _text(
+                px(x) + (-4 if near_right_edge else 4),
+                y0 + 14 + 15 * index,
+                label,
+                11,
+                "end" if near_right_edge else "start",
+                MUTED,
+            )
+        )
     for index, (name, points) in enumerate(series.items()):
         colour = PALETTE[index % len(PALETTE)]
         path = " ".join(f"{px(x):.1f},{py(y):.1f}" for x, y in points)
@@ -131,9 +150,11 @@ def line_chart(
         )
         for x, y in points if len(points) <= 12 else []:
             parts.append(f"<circle cx='{px(x):.1f}' cy='{py(y):.1f}' r='3.5' fill='{colour}'/>")
-        last_x, last_y = points[-1]
-        parts.append(_text(min(px(last_x), x1 - 4), py(last_y) - 8, name, 11, "end", colour, "600"))
-    return "".join(parts)
+        if len(series) > 1:  # with one line, the title already says what it is
+            last_x, last_y = points[-1]
+            label_x = min(px(last_x), x1 - 4)
+            parts.append(_text(label_x, py(last_y) - 8, name, 11, "end", colour, "600"))
+    return Panel("".join(parts), width, height)
 
 
 def bar_chart(
@@ -144,12 +165,12 @@ def bar_chart(
     width: int = 640,
     height: int = 340,
     unit: str = "",
-) -> str:
+) -> Panel:
     """Grouped bars: one cluster per group, one bar per series, each with its value on top."""
     x0, x1 = MARGIN["left"], width - MARGIN["right"]
     y0, y1 = MARGIN["top"], height - MARGIN["bottom"]
     top = _nice_max(max((v for values in series.values() for v in values), default=1))
-    parts = _frame(title, ylabel, "", width, height, y0) + _y_axis(top, x0, x1, y0, y1, unit)
+    parts = _frame(title, ylabel, "", width, height) + _y_axis(top, x0, x1, y0, y1, unit)
     cluster = (x1 - x0) / len(groups)
     bar = cluster * 0.8 / len(series)
     for g, group in enumerate(groups):
@@ -170,17 +191,17 @@ def bar_chart(
             f"fill='{PALETTE[s % len(PALETTE)]}' rx='2'/>"
         )
         parts.append(_text(x0 + 150 * s + 15, height - 13, name, 11, "start", MUTED))
-    return "".join(parts)
+    return Panel("".join(parts), width, height)
 
 
-def document(panels: list[tuple[str, int, int]], path: Path) -> None:
-    """Stack panels (svg fragment, width, height) vertically into one SVG file."""
-    width = max(w for _, w, _ in panels)
-    height = sum(h for _, _, h in panels)
+def document(panels: list[Panel], path: Path) -> None:
+    """Stack panels vertically into one SVG file, each in exactly the space it was drawn for."""
+    width = max(panel.width for panel in panels)
+    height = sum(panel.height for panel in panels)
     body, offset = [], 0
-    for fragment, _, panel_height in panels:
-        body.append(f"<g transform='translate(0 {offset})'>{fragment}</g>")
-        offset += panel_height
+    for panel in panels:
+        body.append(f"<g transform='translate(0 {offset})'>{panel.svg}</g>")
+        offset += panel.height
     path.write_text(
         f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {height}' "
         f"width='{width}' height='{height}'>"
@@ -202,28 +223,20 @@ def write_concurrency_chart(results: dict, path: Path) -> None:
             p99[data["label"]] = [(c, r["p99_ms"]) for c, r in good]
     document(
         [
-            (
-                line_chart(
-                    "Throughput by connections",
-                    rps,
-                    "simultaneous connections",
-                    "requests/s",
-                    log_x=True,
-                ),
-                640,
-                340,
+            line_chart(
+                "Throughput by connections",
+                rps,
+                "simultaneous connections",
+                "requests/s",
+                log_x=True,
             ),
-            (
-                line_chart(
-                    "p99 latency by connections",
-                    p99,
-                    "simultaneous connections",
-                    "milliseconds",
-                    log_x=True,
-                    unit=" ms",
-                ),
-                640,
-                340,
+            line_chart(
+                "p99 latency by connections",
+                p99,
+                "simultaneous connections",
+                "milliseconds",
+                log_x=True,
+                unit=" ms",
             ),
         ],
         path,
@@ -241,26 +254,18 @@ def write_benchmark_chart(results: dict, path: Path) -> None:
     p99 = [results["setups"][n]["levels"][single]["median"]["p99_ms"] for n in names]
     document(
         [
-            (
-                bar_chart(
-                    f"Redirects per second at {busy} clients (higher is better)",
-                    labels,
-                    {"req/s": throughput},
-                    "requests/s",
-                ),
-                640,
-                340,
+            bar_chart(
+                f"Redirects per second at {busy} clients (higher is better)",
+                labels,
+                {"req/s": throughput},
+                "requests/s",
             ),
-            (
-                bar_chart(
-                    f"Latency with {single} client (lower is better)",
-                    labels,
-                    {"p50": p50, "p99": p99},
-                    "milliseconds",
-                    unit=" ms",
-                ),
-                640,
-                340,
+            bar_chart(
+                f"Latency with {single} client (lower is better)",
+                labels,
+                {"p50": p50, "p99": p99},
+                "milliseconds",
+                unit=" ms",
             ),
         ],
         path,
