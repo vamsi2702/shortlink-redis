@@ -12,6 +12,7 @@ dependencies = [
     "pyjwt",
     "bcrypt",
     "email-validator",
+    "redis",  # the client the API uses to talk to MiniRedis
 ]
 
 [project.optional-dependencies]
@@ -20,7 +21,6 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",
     "httpx",
-    "redis",
     "ruff",
     "mypy",
 ]

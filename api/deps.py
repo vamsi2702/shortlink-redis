@@ -1,13 +1,16 @@
 from collections.abc import Iterator
+from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from api import config
 from api.db import SessionLocal
 from api.models import User
 from api.services.cache import Cache, default_cache
+from api.services.redis_cache import RedisCache, connect
 from api.services.security import decode_access_token
 
 
@@ -21,7 +24,14 @@ def get_db() -> Iterator[Session]:
 DbSession = Annotated[Session, Depends(get_db)]
 
 
+@lru_cache
+def _miniredis_cache(url: str) -> Cache:
+    return RedisCache(connect(url))  # built once, so every request shares one connection pool
+
+
 def get_cache() -> Cache:
+    if config.MINIREDIS_URL:
+        return _miniredis_cache(config.MINIREDIS_URL)
     return default_cache
 
 

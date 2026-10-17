@@ -13,6 +13,14 @@ BCRYPT_ROUNDS = int(os.environ.get("BCRYPT_ROUNDS", "12"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 NOT_FOUND_TTL_SECONDS = int(os.environ.get("NOT_FOUND_TTL_SECONDS", "30"))
 
+# Where MiniRedis listens, e.g. redis://localhost:6380. Empty means "do not use MiniRedis": the API
+# then keeps its cache inside its own process (fine for development and for the unit tests).
+MINIREDIS_URL = os.environ.get("MINIREDIS_URL", "")
+# A call to MiniRedis that takes longer than this counts as a failure (the cache must be quick)
+MINIREDIS_TIMEOUT_SECONDS = float(os.environ.get("MINIREDIS_TIMEOUT_SECONDS", "0.25"))
+# After a failure, stop trying MiniRedis for this long, so a dead server does not slow every request
+MINIREDIS_RETRY_SECONDS = float(os.environ.get("MINIREDIS_RETRY_SECONDS", "5"))
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+psycopg://shortlink:shortlink@localhost:5432/shortlink",

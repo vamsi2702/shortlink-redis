@@ -11,6 +11,10 @@ class Cache(Protocol):
 
     def set(self, key: str, value: str, ttl: float | None = None) -> None: ...
 
+    def set_nx(self, key: str, value: str, ttl: float) -> bool:
+        """Set the key only if it does not exist yet. Returns True if it was set."""
+        ...
+
     def delete(self, key: str) -> None: ...
 
     def incr(self, key: str) -> int: ...
@@ -39,6 +43,13 @@ class InMemoryCache:
             if key not in self._data and len(self._data) >= self._max_entries:
                 del self._data[next(iter(self._data))]  # evict the oldest entry
             self._data[key] = (value, self._expiry(ttl))
+
+    def set_nx(self, key: str, value: str, ttl: float) -> bool:
+        with self._lock:
+            if self._live(key) is not None:
+                return False
+            self._data[key] = (value, self._expiry(ttl))
+            return True
 
     def delete(self, key: str) -> None:
         with self._lock:

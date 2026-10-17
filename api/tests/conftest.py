@@ -7,6 +7,8 @@ from api.db import engine
 from api.deps import get_cache, get_db
 from api.main import app
 from api.services.cache import InMemoryCache
+from api.services.redis_cache import RedisCache, connect
+from miniredis.testing import start_server_thread
 
 
 @pytest.fixture(autouse=True)
@@ -33,6 +35,20 @@ def db():
 def cache():
     """A fresh, empty cache for each test, so tests cannot affect each other."""
     return InMemoryCache()
+
+
+@pytest.fixture
+def miniredis_server():
+    """A real MiniRedis running in a background thread, stopped after the test."""
+    server = start_server_thread()
+    yield server
+    server.stop()
+
+
+@pytest.fixture
+def redis_cache(miniredis_server):
+    """The API's RedisCache connected to that MiniRedis."""
+    return RedisCache(connect(miniredis_server.url))
 
 
 @pytest.fixture
