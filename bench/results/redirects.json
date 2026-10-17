@@ -1,0 +1,627 @@
+{
+  "params": {
+    "setups": "none,inprocess,redis,miniredis",
+    "pattern": "zipf",
+    "levels": [
+      1,
+      32
+    ],
+    "duration": 15.0,
+    "repeats": 3,
+    "warmup_requests": 30000,
+    "cold_seconds": 15.0,
+    "links": 100000,
+    "out": "redirects"
+  },
+  "setups": {
+    "none": {
+      "label": "No cache (every redirect asks Postgres)",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 2409,
+        "errors": 0,
+        "requests_per_s": 160.6,
+        "p50_ms": 189.90006400008497,
+        "p95_ms": 289.83018400003857,
+        "p99_ms": 380.9780189999401,
+        "max_ms": 568.7216239998634,
+        "cache_hit_ratio": 0.0,
+        "statuses": {
+          "302": 2278,
+          "201": 131
+        }
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2418,
+              "errors": 0,
+              "requests_per_s": 161.2,
+              "p50_ms": 191.70216700013043,
+              "p95_ms": 290.89012700023886,
+              "p99_ms": 355.2157700000862,
+              "max_ms": 434.2346620001081,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2284,
+                "201": 134
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2662,
+              "errors": 0,
+              "requests_per_s": 177.46666666666667,
+              "p50_ms": 171.77220900020984,
+              "p95_ms": 269.54432999991695,
+              "p99_ms": 334.2081010000584,
+              "max_ms": 409.987798000202,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2522,
+                "201": 140
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2537,
+              "errors": 0,
+              "requests_per_s": 169.13333333333333,
+              "p50_ms": 182.18162200037114,
+              "p95_ms": 276.351741000326,
+              "p99_ms": 336.46104099989316,
+              "max_ms": 411.236703999748,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2391,
+                "201": 146
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 169.13333333333333,
+            "p50_ms": 182.18162200037114,
+            "p95_ms": 276.351741000326,
+            "p99_ms": 336.46104099989316,
+            "cache_hit_ratio": 0.0,
+            "errors": 0,
+            "requests": 7617
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2484,
+              "errors": 0,
+              "requests_per_s": 165.6,
+              "p50_ms": 5.4562479999731295,
+              "p95_ms": 9.722712999973737,
+              "p99_ms": 15.035170999908587,
+              "max_ms": 33.670685999823036,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2360,
+                "201": 124
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2849,
+              "errors": 0,
+              "requests_per_s": 189.93333333333334,
+              "p50_ms": 4.831561000173679,
+              "p95_ms": 8.564179000131844,
+              "p99_ms": 11.383735999970668,
+              "max_ms": 27.46922899996207,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2709,
+                "201": 140
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2689,
+              "errors": 0,
+              "requests_per_s": 179.26666666666668,
+              "p50_ms": 5.059859000084543,
+              "p95_ms": 9.324449999894568,
+              "p99_ms": 12.346237999736331,
+              "max_ms": 26.87650100006067,
+              "cache_hit_ratio": 0.0,
+              "statuses": {
+                "302": 2550,
+                "201": 139
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 179.26666666666668,
+            "p50_ms": 5.059859000084543,
+            "p95_ms": 9.324449999894568,
+            "p99_ms": 12.346237999736331,
+            "cache_hit_ratio": 0.0,
+            "errors": 0,
+            "requests": 8022
+          }
+        }
+      }
+    },
+    "inprocess": {
+      "label": "In-process dict (the Phase 1 cache)",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 2169,
+        "errors": 0,
+        "requests_per_s": 144.6,
+        "p50_ms": 207.51745100005792,
+        "p95_ms": 325.6562789997588,
+        "p99_ms": 395.5971610002962,
+        "max_ms": 586.3214820001303,
+        "cache_hit_ratio": 0.45877277085330775,
+        "statuses": {
+          "302": 2057,
+          "201": 112
+        }
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2683,
+              "errors": 0,
+              "requests_per_s": 178.86666666666667,
+              "p50_ms": 161.79527599979338,
+              "p95_ms": 290.5331069996464,
+              "p99_ms": 401.8400660002044,
+              "max_ms": 626.3417879999906,
+              "cache_hit_ratio": 0.6912280701754386,
+              "statuses": {
+                "302": 2530,
+                "201": 153
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2801,
+              "errors": 0,
+              "requests_per_s": 186.73333333333332,
+              "p50_ms": 157.24166600011813,
+              "p95_ms": 263.94840900002237,
+              "p99_ms": 325.9014740001476,
+              "max_ms": 564.4085399999312,
+              "cache_hit_ratio": 0.6921641791044776,
+              "statuses": {
+                "302": 2651,
+                "201": 150
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2653,
+              "errors": 0,
+              "requests_per_s": 176.86666666666667,
+              "p50_ms": 167.66671000004862,
+              "p95_ms": 284.36211200005346,
+              "p99_ms": 350.5846810003277,
+              "max_ms": 543.6019949997899,
+              "cache_hit_ratio": 0.6973164956590371,
+              "statuses": {
+                "302": 2509,
+                "201": 144
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 178.86666666666667,
+            "p50_ms": 161.79527599979338,
+            "p95_ms": 284.36211200005346,
+            "p99_ms": 350.5846810003277,
+            "cache_hit_ratio": 0.6921641791044776,
+            "errors": 0,
+            "requests": 8137
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2999,
+              "errors": 0,
+              "requests_per_s": 199.93333333333334,
+              "p50_ms": 4.33947999999873,
+              "p95_ms": 9.853329000179656,
+              "p99_ms": 12.900678000278276,
+              "max_ms": 26.812070999767457,
+              "cache_hit_ratio": 0.7036516853932584,
+              "statuses": {
+                "201": 152,
+                "302": 2847
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2935,
+              "errors": 0,
+              "requests_per_s": 195.66666666666666,
+              "p50_ms": 4.486411000016233,
+              "p95_ms": 9.807416000057856,
+              "p99_ms": 13.440218000141613,
+              "max_ms": 66.89133600002606,
+              "cache_hit_ratio": 0.7044722719141324,
+              "statuses": {
+                "302": 2794,
+                "201": 141
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3020,
+              "errors": 0,
+              "requests_per_s": 201.33333333333334,
+              "p50_ms": 4.325418999997055,
+              "p95_ms": 9.34794900013003,
+              "p99_ms": 15.098707000106515,
+              "max_ms": 32.64166099961585,
+              "cache_hit_ratio": 0.7102510460251046,
+              "statuses": {
+                "302": 2867,
+                "201": 153
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 199.93333333333334,
+            "p50_ms": 4.33947999999873,
+            "p95_ms": 9.807416000057856,
+            "p99_ms": 13.440218000141613,
+            "cache_hit_ratio": 0.7044722719141324,
+            "errors": 0,
+            "requests": 8954
+          }
+        }
+      }
+    },
+    "redis": {
+      "label": "Real Redis 7",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 1900,
+        "errors": 0,
+        "requests_per_s": 126.66666666666667,
+        "p50_ms": 234.92873899976985,
+        "p95_ms": 384.6166290004476,
+        "p99_ms": 473.97872300007293,
+        "max_ms": 639.2769719996068,
+        "cache_hit_ratio": 0.4417211328976035,
+        "statuses": {
+          "302": 1807,
+          "201": 93
+        }
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2871,
+              "errors": 0,
+              "requests_per_s": 191.4,
+              "p50_ms": 153.43068699985452,
+              "p95_ms": 268.95863699974143,
+              "p99_ms": 335.98981500017544,
+              "max_ms": 418.81380299946613,
+              "cache_hit_ratio": 0.7499087258123402,
+              "statuses": {
+                "302": 2709,
+                "201": 162
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 3120,
+              "errors": 0,
+              "requests_per_s": 208.0,
+              "p50_ms": 144.9244940004064,
+              "p95_ms": 231.47445200083894,
+              "p99_ms": 288.66366499914875,
+              "max_ms": 391.8786539998109,
+              "cache_hit_ratio": 0.7515902243053231,
+              "statuses": {
+                "302": 2960,
+                "201": 160
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 3040,
+              "errors": 0,
+              "requests_per_s": 202.66666666666666,
+              "p50_ms": 147.93371999985538,
+              "p95_ms": 238.4948680000889,
+              "p99_ms": 309.9930439993841,
+              "max_ms": 494.7447510003258,
+              "cache_hit_ratio": 0.7578259373925008,
+              "statuses": {
+                "302": 2877,
+                "201": 163
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 202.66666666666666,
+            "p50_ms": 147.93371999985538,
+            "p95_ms": 238.4948680000889,
+            "p99_ms": 309.9930439993841,
+            "cache_hit_ratio": 0.7515902243053231,
+            "errors": 0,
+            "requests": 9031
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3495,
+              "errors": 0,
+              "requests_per_s": 233.0,
+              "p50_ms": 3.5877950003850856,
+              "p95_ms": 8.397852999223687,
+              "p99_ms": 12.558376000015414,
+              "max_ms": 24.853618999259197,
+              "cache_hit_ratio": 0.7766053662948448,
+              "statuses": {
+                "302": 3316,
+                "201": 179
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3300,
+              "errors": 0,
+              "requests_per_s": 220.0,
+              "p50_ms": 3.864359000544937,
+              "p95_ms": 8.684411000103864,
+              "p99_ms": 11.569606999728421,
+              "max_ms": 20.71802199952799,
+              "cache_hit_ratio": 0.790594216714331,
+              "statuses": {
+                "302": 3146,
+                "201": 154
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3135,
+              "errors": 0,
+              "requests_per_s": 209.0,
+              "p50_ms": 4.065270999490167,
+              "p95_ms": 9.19620000058785,
+              "p99_ms": 11.804095999650599,
+              "max_ms": 35.03766500034544,
+              "cache_hit_ratio": 0.7794216543375925,
+              "statuses": {
+                "201": 162,
+                "302": 2973
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 220.0,
+            "p50_ms": 3.864359000544937,
+            "p95_ms": 8.684411000103864,
+            "p99_ms": 11.804095999650599,
+            "cache_hit_ratio": 0.7794216543375925,
+            "errors": 0,
+            "requests": 9930
+          }
+        }
+      }
+    },
+    "miniredis": {
+      "label": "MiniRedis",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 2439,
+        "errors": 0,
+        "requests_per_s": 162.6,
+        "p50_ms": 184.2568060001213,
+        "p95_ms": 287.28661100012687,
+        "p99_ms": 356.94735200013383,
+        "max_ms": 537.2473209999953,
+        "cache_hit_ratio": 0.4657534246575342,
+        "statuses": {
+          "302": 2307,
+          "201": 132
+        }
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2788,
+              "errors": 0,
+              "requests_per_s": 185.86666666666667,
+              "p50_ms": 160.59350999967137,
+              "p95_ms": 264.2688140003884,
+              "p99_ms": 333.99727100004384,
+              "max_ms": 483.48957100006373,
+              "cache_hit_ratio": 0.7454954954954955,
+              "statuses": {
+                "302": 2635,
+                "201": 153
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2827,
+              "errors": 0,
+              "requests_per_s": 188.46666666666667,
+              "p50_ms": 156.94179399997665,
+              "p95_ms": 278.4755619995849,
+              "p99_ms": 355.1009989996601,
+              "max_ms": 550.6881949995659,
+              "cache_hit_ratio": 0.7547239718414227,
+              "statuses": {
+                "302": 2680,
+                "201": 147
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 3106,
+              "errors": 0,
+              "requests_per_s": 207.06666666666666,
+              "p50_ms": 142.4612070004514,
+              "p95_ms": 247.42452999998932,
+              "p99_ms": 310.9956870002861,
+              "max_ms": 494.48677899999893,
+              "cache_hit_ratio": 0.7585160202360877,
+              "statuses": {
+                "302": 2938,
+                "201": 168
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 188.46666666666667,
+            "p50_ms": 156.94179399997665,
+            "p95_ms": 264.2688140003884,
+            "p99_ms": 333.99727100004384,
+            "cache_hit_ratio": 0.7547239718414227,
+            "errors": 0,
+            "requests": 8721
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3120,
+              "errors": 0,
+              "requests_per_s": 208.0,
+              "p50_ms": 4.115783000088413,
+              "p95_ms": 8.974827000201913,
+              "p99_ms": 12.85565900070651,
+              "max_ms": 28.861093999694276,
+              "cache_hit_ratio": 0.7793522267206477,
+              "statuses": {
+                "302": 2963,
+                "201": 157
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3233,
+              "errors": 0,
+              "requests_per_s": 215.53333333333333,
+              "p50_ms": 3.9562769998156,
+              "p95_ms": 8.621521999884862,
+              "p99_ms": 12.754599999425409,
+              "max_ms": 22.34802299972216,
+              "cache_hit_ratio": 0.7867575462512172,
+              "statuses": {
+                "302": 3080,
+                "201": 153
+              }
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 3241,
+              "errors": 0,
+              "requests_per_s": 216.06666666666666,
+              "p50_ms": 3.9379780000672326,
+              "p95_ms": 8.622511000794475,
+              "p99_ms": 12.71763299973827,
+              "max_ms": 29.628491000039503,
+              "cache_hit_ratio": 0.7766958779617007,
+              "statuses": {
+                "302": 3080,
+                "201": 161
+              }
+            }
+          ],
+          "median": {
+            "requests_per_s": 215.53333333333333,
+            "p50_ms": 3.9562769998156,
+            "p95_ms": 8.622511000794475,
+            "p99_ms": 12.754599999425409,
+            "cache_hit_ratio": 0.7793522267206477,
+            "errors": 0,
+            "requests": 9594
+          }
+        }
+      }
+    }
+  },
+  "environment": {
+    "date": "2026-10-17 14:43",
+    "host": "Windows 11, Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "docker": "28.3.3 cpus=16 memory=7273271296",
+    "redis": "Redis server v=7.4.11 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=f20da322597b16d7",
+    "python_in_containers": "Python 3.12.15",
+    "postgres": "postgres (PostgreSQL) 16.13 (Debian 16.13-1.pgdg13+1)",
+    "cpu_limits": "api 2, redis 1, miniredis 1, worker 1, load generator 4; postgres unlimited"
+  }
+}

@@ -15,6 +15,7 @@ so the numbers do not include Windows' slow forwarding of ports into Docker.
 
 import argparse
 import http.client
+import itertools
 import json
 import platform
 import statistics
@@ -65,7 +66,16 @@ def compose_command(env_file: Path, *args: str) -> list[str]:
 
 
 def run(command: list[str], capture: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(command, cwd=ROOT, text=True, check=True, capture_output=capture)
+    # utf-8 with "replace": Docker's progress output has bytes Windows' codepage cannot read
+    return subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=True,
+        capture_output=capture,
+    )
 
 
 def write_env_file(setup: Setup, directory: Path) -> Path:
@@ -144,13 +154,19 @@ def summarize(runs: list[dict]) -> dict:
 
 def measure(setup: Setup, env_file: Path, options: argparse.Namespace) -> dict:
     """A cold run, then a fixed warm-up, then `repeats` measured runs at each load level."""
-    common = ["--pattern", options.pattern, "--seed", "1"]
+    common = ["--pattern", options.pattern]
+    # Every load run gets its OWN seed, so it draws new requests from the same distribution.
+    # With one shared seed, later runs would replay the first run's requests, find them all
+    # cached, and report a hit ratio of 100% that real traffic would never reach.
+    seeds = itertools.count(1)
     busiest = max(options.levels)
     log(f"cold run ({busiest} clients, cache empty, no warm-up)")
     cold = load(
         env_file,
         [
             *common,
+            "--seed",
+            str(next(seeds)),
             "--clients",
             str(busiest),
             "--duration",
@@ -177,6 +193,8 @@ def measure(setup: Setup, env_file: Path, options: argparse.Namespace) -> dict:
                     env_file,
                     [
                         *common,
+                        "--seed",
+                        str(next(seeds)),
                         "--clients",
                         str(clients),
                         "--duration",
