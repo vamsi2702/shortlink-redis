@@ -1,0 +1,446 @@
+{
+  "params": {
+    "connections": "10,100,1000",
+    "requests": 100000,
+    "repeats": 3,
+    "test": "set,get",
+    "servers": "redis,asyncio,threaded",
+    "out": "concurrency",
+    "levels": [
+      10,
+      100,
+      1000
+    ]
+  },
+  "servers": {
+    "redis": {
+      "label": "Real Redis 7 (C, event loop)",
+      "levels": {
+        "10": {
+          "requests_per_s": 80840.74,
+          "p50_ms": 0.047,
+          "p99_ms": 0.335,
+          "max_ms": 40.191,
+          "set_requests_per_s": 80256.82,
+          "cpu_seconds_per_100k_requests": 1.3088965,
+          "memory_mib_after": 9.5390625,
+          "memory_mib_added": 0.2265625,
+          "wall_seconds": 2.591899099999864,
+          "runs": [
+            {
+              "requests_per_s": 78616.35,
+              "p50_ms": 0.047,
+              "p99_ms": 0.335,
+              "max_ms": 39.391,
+              "set_requests_per_s": 80385.85,
+              "cpu_seconds_per_100k_requests": 1.3088965,
+              "memory_mib_after": 9.5390625,
+              "memory_mib_added": 0.2265625,
+              "wall_seconds": 2.591899099999864
+            },
+            {
+              "requests_per_s": 80840.74,
+              "p50_ms": 0.047,
+              "p99_ms": 0.335,
+              "max_ms": 43.679,
+              "set_requests_per_s": 77101.0,
+              "cpu_seconds_per_100k_requests": 1.3147164999999998,
+              "memory_mib_after": 9.7578125,
+              "memory_mib_added": 0.46484375,
+              "wall_seconds": 2.636937499999476
+            },
+            {
+              "requests_per_s": 83963.05,
+              "p50_ms": 0.047,
+              "p99_ms": 0.215,
+              "max_ms": 40.191,
+              "set_requests_per_s": 80256.82,
+              "cpu_seconds_per_100k_requests": 1.266109,
+              "memory_mib_after": 9.36328125,
+              "memory_mib_added": -0.19140625,
+              "wall_seconds": 2.5130198999995628
+            }
+          ]
+        },
+        "100": {
+          "requests_per_s": 91996.32,
+          "p50_ms": 0.335,
+          "p99_ms": 2.759,
+          "max_ms": 47.135,
+          "set_requests_per_s": 85910.65,
+          "cpu_seconds_per_100k_requests": 1.223254,
+          "memory_mib_after": 10.05078125,
+          "memory_mib_added": 0.58984375,
+          "wall_seconds": 2.5325820000016392,
+          "runs": [
+            {
+              "requests_per_s": 91996.32,
+              "p50_ms": 0.335,
+              "p99_ms": 1.535,
+              "max_ms": 48.543,
+              "set_requests_per_s": 90090.09,
+              "cpu_seconds_per_100k_requests": 1.213383,
+              "memory_mib_after": 10.4375,
+              "memory_mib_added": 0.76953125,
+              "wall_seconds": 2.513996199999383
+            },
+            {
+              "requests_per_s": 84175.09,
+              "p50_ms": 0.351,
+              "p99_ms": 33.535,
+              "max_ms": 43.775,
+              "set_requests_per_s": 85836.91,
+              "cpu_seconds_per_100k_requests": 1.261205,
+              "memory_mib_after": 10.05078125,
+              "memory_mib_added": 0.58984375,
+              "wall_seconds": 2.616350700000112
+            },
+            {
+              "requests_per_s": 320512.81,
+              "p50_ms": 0.327,
+              "p99_ms": 2.759,
+              "max_ms": 47.135,
+              "set_requests_per_s": 85910.65,
+              "cpu_seconds_per_100k_requests": 1.223254,
+              "memory_mib_after": 9.96875,
+              "memory_mib_added": 0.22265625,
+              "wall_seconds": 2.5325820000016392
+            }
+          ]
+        },
+        "1000": {
+          "requests_per_s": 60496.07,
+          "p50_ms": 4.839,
+          "p99_ms": 51.135,
+          "max_ms": 59.839,
+          "set_requests_per_s": 60716.46,
+          "cpu_seconds_per_100k_requests": 1.9914485,
+          "memory_mib_after": 21.3984375,
+          "memory_mib_added": 12.30078125,
+          "wall_seconds": 5.70858810000027,
+          "runs": [
+            {
+              "requests_per_s": 60496.07,
+              "p50_ms": 4.839,
+              "p99_ms": 52.735,
+              "max_ms": 63.295,
+              "set_requests_per_s": 63331.22,
+              "cpu_seconds_per_100k_requests": 2.001,
+              "memory_mib_after": 21.3984375,
+              "memory_mib_added": 12.30078125,
+              "wall_seconds": 5.729467200000727
+            },
+            {
+              "requests_per_s": 64184.86,
+              "p50_ms": 4.919,
+              "p99_ms": 47.583,
+              "max_ms": 55.327,
+              "set_requests_per_s": 60716.46,
+              "cpu_seconds_per_100k_requests": 1.9784745,
+              "memory_mib_after": 22.8359375,
+              "memory_mib_added": 13.3671875,
+              "wall_seconds": 5.70858810000027
+            },
+            {
+              "requests_per_s": 60350.03,
+              "p50_ms": 4.631,
+              "p99_ms": 51.135,
+              "max_ms": 59.839,
+              "set_requests_per_s": 58548.01,
+              "cpu_seconds_per_100k_requests": 1.9914485,
+              "memory_mib_after": 21.12890625,
+              "memory_mib_added": 11.76953125,
+              "wall_seconds": 5.614649600000121
+            }
+          ]
+        }
+      }
+    },
+    "asyncio": {
+      "label": "MiniRedis, asyncio (one thread)",
+      "levels": {
+        "10": {
+          "requests_per_s": 20691.08,
+          "p50_ms": 0.447,
+          "p99_ms": 1.095,
+          "max_ms": 50.623,
+          "set_requests_per_s": 18828.85,
+          "cpu_seconds_per_100k_requests": 4.786466,
+          "memory_mib_after": 18.25390625,
+          "memory_mib_added": -0.16015625,
+          "wall_seconds": 9.740180799999507,
+          "runs": [
+            {
+              "requests_per_s": 17765.14,
+              "p50_ms": 0.527,
+              "p99_ms": 1.351,
+              "max_ms": 43.775,
+              "set_requests_per_s": 18828.85,
+              "cpu_seconds_per_100k_requests": 5.1317355,
+              "memory_mib_after": 17.94921875,
+              "memory_mib_added": -0.421875,
+              "wall_seconds": 10.436235999999553
+            },
+            {
+              "requests_per_s": 21574.97,
+              "p50_ms": 0.399,
+              "p99_ms": 1.095,
+              "max_ms": 50.623,
+              "set_requests_per_s": 19113.15,
+              "cpu_seconds_per_100k_requests": 4.616918,
+              "memory_mib_after": 18.25390625,
+              "memory_mib_added": -0.16015625,
+              "wall_seconds": 9.427325499998915
+            },
+            {
+              "requests_per_s": 20691.08,
+              "p50_ms": 0.447,
+              "p99_ms": 1.023,
+              "max_ms": 53.727,
+              "set_requests_per_s": 18491.12,
+              "cpu_seconds_per_100k_requests": 4.786466,
+              "memory_mib_after": 18.25390625,
+              "memory_mib_added": 0.13671875,
+              "wall_seconds": 9.740180799999507
+            }
+          ]
+        },
+        "100": {
+          "requests_per_s": 21815.01,
+          "p50_ms": 4.183,
+          "p99_ms": 10.743,
+          "max_ms": 59.423,
+          "set_requests_per_s": 18939.39,
+          "cpu_seconds_per_100k_requests": 4.762718,
+          "memory_mib_after": 18.27734375,
+          "memory_mib_added": 0.21484375,
+          "wall_seconds": 9.760605900000883,
+          "runs": [
+            {
+              "requests_per_s": 20712.51,
+              "p50_ms": 4.183,
+              "p99_ms": 10.559,
+              "max_ms": 61.439,
+              "set_requests_per_s": 18804.06,
+              "cpu_seconds_per_100k_requests": 4.802612,
+              "memory_mib_after": 18.27734375,
+              "memory_mib_added": -0.12890625,
+              "wall_seconds": 9.83319549999942
+            },
+            {
+              "requests_per_s": 21815.01,
+              "p50_ms": 4.135,
+              "p99_ms": 11.431,
+              "max_ms": 49.375,
+              "set_requests_per_s": 18939.39,
+              "cpu_seconds_per_100k_requests": 4.6797435,
+              "memory_mib_after": 18.23828125,
+              "memory_mib_added": 0.21484375,
+              "wall_seconds": 9.614404599999034
+            },
+            {
+              "requests_per_s": 21829.29,
+              "p50_ms": 4.327,
+              "p99_ms": 10.743,
+              "max_ms": 59.423,
+              "set_requests_per_s": 24813.89,
+              "cpu_seconds_per_100k_requests": 4.762718,
+              "memory_mib_after": 18.3046875,
+              "memory_mib_added": 0.46875,
+              "wall_seconds": 9.760605900000883
+            }
+          ]
+        },
+        "1000": {
+          "requests_per_s": 15632.33,
+          "p50_ms": 58.943,
+          "p99_ms": 163.583,
+          "max_ms": 180.351,
+          "set_requests_per_s": 16952.03,
+          "cpu_seconds_per_100k_requests": 6.3732205,
+          "memory_mib_after": 24.140625,
+          "memory_mib_added": 5.86328125,
+          "wall_seconds": 14.311082199999873,
+          "runs": [
+            {
+              "requests_per_s": 15632.33,
+              "p50_ms": 58.943,
+              "p99_ms": 169.087,
+              "max_ms": 180.351,
+              "set_requests_per_s": 16863.41,
+              "cpu_seconds_per_100k_requests": 6.3732205,
+              "memory_mib_after": 24.0,
+              "memory_mib_added": 5.8125,
+              "wall_seconds": 14.311082199999873
+            },
+            {
+              "requests_per_s": 20504.41,
+              "p50_ms": 44.799,
+              "p99_ms": 94.143,
+              "max_ms": 102.079,
+              "set_requests_per_s": 18086.45,
+              "cpu_seconds_per_100k_requests": 5.33714,
+              "memory_mib_after": 24.2890625,
+              "memory_mib_added": 6.14453125,
+              "wall_seconds": 12.290124099999957
+            },
+            {
+              "requests_per_s": 14952.15,
+              "p50_ms": 62.559,
+              "p99_ms": 163.583,
+              "max_ms": 180.479,
+              "set_requests_per_s": 16952.03,
+              "cpu_seconds_per_100k_requests": 6.378919000000001,
+              "memory_mib_after": 24.140625,
+              "memory_mib_added": 5.86328125,
+              "wall_seconds": 14.323939900001278
+            }
+          ]
+        }
+      }
+    },
+    "threaded": {
+      "label": "MiniRedis, thread per connection",
+      "levels": {
+        "10": {
+          "requests_per_s": 9541.99,
+          "p50_ms": 0.823,
+          "p99_ms": 24.495,
+          "max_ms": 39.039,
+          "set_requests_per_s": 7622.53,
+          "cpu_seconds_per_100k_requests": 13.454750500000001,
+          "memory_mib_after": 18.71875,
+          "memory_mib_added": 1.34765625,
+          "wall_seconds": 25.09014560000105,
+          "runs": [
+            {
+              "requests_per_s": 9720.06,
+              "p50_ms": 0.823,
+              "p99_ms": 24.495,
+              "max_ms": 37.439,
+              "set_requests_per_s": 7622.53,
+              "cpu_seconds_per_100k_requests": 12.8514505,
+              "memory_mib_after": 18.91796875,
+              "memory_mib_added": 1.9140625,
+              "wall_seconds": 23.97845579999921
+            },
+            {
+              "requests_per_s": 7487.83,
+              "p50_ms": 0.855,
+              "p99_ms": 23.247,
+              "max_ms": 44.159,
+              "set_requests_per_s": 7664.6,
+              "cpu_seconds_per_100k_requests": 14.377822,
+              "memory_mib_after": 18.71875,
+              "memory_mib_added": 1.1953125,
+              "wall_seconds": 26.688740999999936
+            },
+            {
+              "requests_per_s": 9541.99,
+              "p50_ms": 0.815,
+              "p99_ms": 24.879,
+              "max_ms": 39.039,
+              "set_requests_per_s": 7067.64,
+              "cpu_seconds_per_100k_requests": 13.454750500000001,
+              "memory_mib_after": 18.65625,
+              "memory_mib_added": 1.34765625,
+              "wall_seconds": 25.09014560000105
+            }
+          ]
+        },
+        "100": {
+          "requests_per_s": 7046.22,
+          "p50_ms": 9.087,
+          "p99_ms": 64.383,
+          "max_ms": 213.887,
+          "set_requests_per_s": 6714.11,
+          "cpu_seconds_per_100k_requests": 16.021332,
+          "memory_mib_after": 32.05078125,
+          "memory_mib_added": 14.546875,
+          "wall_seconds": 29.925930600000356,
+          "runs": [
+            {
+              "requests_per_s": 7046.22,
+              "p50_ms": 8.575,
+              "p99_ms": 74.687,
+              "max_ms": 348.671,
+              "set_requests_per_s": 7018.04,
+              "cpu_seconds_per_100k_requests": 15.47166,
+              "memory_mib_after": 32.07421875,
+              "memory_mib_added": 14.57421875,
+              "wall_seconds": 28.973645000000033
+            },
+            {
+              "requests_per_s": 6260.17,
+              "p50_ms": 9.951,
+              "p99_ms": 64.383,
+              "max_ms": 213.887,
+              "set_requests_per_s": 6714.11,
+              "cpu_seconds_per_100k_requests": 16.668553,
+              "memory_mib_after": 31.8203125,
+              "memory_mib_added": 14.40625,
+              "wall_seconds": 31.01564430000144
+            },
+            {
+              "requests_per_s": 7812.5,
+              "p50_ms": 9.087,
+              "p99_ms": 61.183,
+              "max_ms": 102.975,
+              "set_requests_per_s": 5957.35,
+              "cpu_seconds_per_100k_requests": 16.021332,
+              "memory_mib_after": 32.05078125,
+              "memory_mib_added": 14.546875,
+              "wall_seconds": 29.925930600000356
+            }
+          ]
+        },
+        "1000": {
+          "requests_per_s": 6292.87,
+          "p50_ms": 168.191,
+          "p99_ms": 626.175,
+          "max_ms": 1399.807,
+          "set_requests_per_s": 5446.03,
+          "cpu_seconds_per_100k_requests": 19.925815,
+          "memory_mib_after": 42.234375,
+          "memory_mib_added": 24.76171875,
+          "wall_seconds": 37.56312529999923,
+          "runs": [
+            {
+              "requests_per_s": 5927.68,
+              "p50_ms": 170.239,
+              "p99_ms": 626.175,
+              "max_ms": 2240.511,
+              "set_requests_per_s": 5446.03,
+              "cpu_seconds_per_100k_requests": 19.925815,
+              "memory_mib_after": 42.234375,
+              "memory_mib_added": 24.76171875,
+              "wall_seconds": 37.56312529999923
+            },
+            {
+              "requests_per_s": 6292.87,
+              "p50_ms": 167.295,
+              "p99_ms": 662.015,
+              "max_ms": 1369.087,
+              "set_requests_per_s": 5389.67,
+              "cpu_seconds_per_100k_requests": 19.121618,
+              "memory_mib_after": 27.37109375,
+              "memory_mib_added": 10.33203125,
+              "wall_seconds": 36.5045267000005
+            },
+            {
+              "requests_per_s": 6595.44,
+              "p50_ms": 168.191,
+              "p99_ms": 525.823,
+              "max_ms": 1399.807,
+              "set_requests_per_s": 5488.47,
+              "cpu_seconds_per_100k_requests": 20.1060645,
+              "memory_mib_after": 43.79296875,
+              "memory_mib_added": 26.25,
+              "wall_seconds": 37.798622300000716
+            }
+          ]
+        }
+      }
+    }
+  }
+}

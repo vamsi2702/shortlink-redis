@@ -36,6 +36,15 @@ services:
   redis:
     cpus: 1
 
+  # The thread-per-connection variant of MiniRedis, for the concurrency experiment
+  # (bench/concurrency.py). Same code and image, a different way of serving clients.
+  miniredis-threaded:
+    image: shortlink-app
+    pull_policy: never  # built by the api service
+    command: ["python", "-m", "miniredis.threaded_server", "--host", "0.0.0.0", "--port", "6381"]
+    cpus: 1
+    profiles: ["tools"]
+
   # Sends the load, from inside Docker so the numbers do not include Windows' slow forwarding of
   # ports. It needs nothing but Python (bench/loadtest.py uses only the standard library), so it
   # runs the project code mounted from here. Run it with:
