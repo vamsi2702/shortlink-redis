@@ -1,3 +1,5 @@
+import threading
+
 import pytest
 import redis
 
@@ -164,3 +166,149 @@ def test_a_dead_miniredis_does_not_slow_every_request(client, redis_cache, minir
         assert client.get(f"/{code}", follow_redirects=False).status_code == 302
 
     assert spy.calls == 0
+
+
+# ---- one probe at a time ---------------------------------------------------------------------
+
+
+def open_breaker(guard, clock):
+    """Make the guard see a failure, then let the retry wait pass, so the next call is the probe."""
+
+    def fail():
+        raise redis.ConnectionError("down")
+
+    with pytest.raises(CacheUnavailable):
+        guard.run(fail)
+    clock.now += guard._retry_seconds + 0.1
+
+
+class Gate:
+    """An operation that waits until the test opens the gate, and counts how often it started."""
+
+    def __init__(self, failure: Exception | None = None) -> None:
+        self.open = threading.Event()
+        self.started = threading.Semaphore(0)
+        self.failure = failure
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        self.started.release()
+        assert self.open.wait(5), "the test never opened the gate"
+        if self.failure is not None:
+            raise self.failure
+        return "answer"
+
+
+def in_thread(guard, operation):
+    outcome = {}
+
+    def work():
+        try:
+            outcome["value"] = guard.run(operation)
+        except CacheUnavailable as exc:
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=work)
+    thread.start()
+    return thread, outcome
+
+
+def test_only_one_call_probes_while_the_others_keep_skipping(clock):
+    guard = Guard(retry_seconds=5, clock=clock)
+    open_breaker(guard, clock)
+    probe = Gate(failure=redis.ConnectionError("still down"))
+    thread, _ = in_thread(guard, probe)
+    assert probe.started.acquire(timeout=5)  # the probe is under way, and stuck
+
+    others = Gate()
+    for _ in range(50):
+        with pytest.raises(CacheUnavailable):
+            guard.run(others)  # none of these may try the server
+
+    assert probe.calls == 1
+    assert others.calls == 0
+    probe.open.set()
+    thread.join(timeout=5)
+
+
+def test_a_failed_probe_keeps_the_breaker_open_for_another_full_wait(clock):
+    guard = Guard(retry_seconds=5, clock=clock)
+    open_breaker(guard, clock)
+    probe = Gate(failure=redis.ConnectionError("still down"))
+    probe.open.set()
+    with pytest.raises(CacheUnavailable):
+        guard.run(probe)
+
+    with pytest.raises(CacheUnavailable):
+        guard.run(Gate())  # the wait starts again, so this one is skipped
+    clock.now += 5.1
+    assert guard.run(lambda: "checked") == "checked"  # and after the wait it is the next probe
+
+
+def test_a_probe_that_succeeds_lets_every_call_through_again(clock):
+    guard = Guard(retry_seconds=5, clock=clock)
+    open_breaker(guard, clock)
+    probe = Gate()
+    probe.open.set()
+    assert guard.run(probe) == "answer"
+
+    later = Gate()
+    later.open.set()
+    assert [guard.run(later) for _ in range(5)] == ["answer"] * 5
+    assert later.calls == 5
+
+
+def test_a_late_success_from_before_the_outage_does_not_close_the_breaker(clock):
+    """A call that started before MiniRedis died may finish after it did. That says nothing
+    about whether it is back."""
+    guard = Guard(retry_seconds=5, clock=clock)
+    slow = Gate()
+    thread, outcome = in_thread(guard, slow)  # started while MiniRedis was still up
+    assert slow.started.acquire(timeout=5)
+
+    def fail():
+        raise redis.ConnectionError("died")
+
+    with pytest.raises(CacheUnavailable):
+        guard.run(fail)  # now it is known to be down
+    slow.open.set()
+    thread.join(timeout=5)
+    assert outcome["value"] == "answer"  # the slow call did finish successfully
+
+    with pytest.raises(CacheUnavailable):
+        guard.run(Gate())  # still down
+
+
+def test_an_error_reply_to_the_probe_still_shows_the_server_is_alive(clock):
+    guard = Guard(retry_seconds=5, clock=clock)
+    open_breaker(guard, clock)
+
+    def wrong_type():
+        raise redis.ResponseError("WRONGTYPE")
+
+    with pytest.raises(CacheUnavailable):
+        guard.run(wrong_type)  # an error, but it came from a running server
+
+    assert guard.run(lambda: "fine") == "fine"  # so the breaker is closed again
+
+
+def test_the_outage_is_logged_once_and_so_is_the_recovery(clock, caplog):
+    guard = Guard(retry_seconds=5, clock=clock)
+    caplog.set_level("INFO", logger="api.redis_cache")
+
+    def fail():
+        raise redis.ConnectionError("down")
+
+    for _ in range(3):
+        with pytest.raises(CacheUnavailable):
+            guard.run(fail)  # the second and third are skipped
+    clock.now += 5.1
+    with pytest.raises(CacheUnavailable):
+        guard.run(fail)  # a failed probe: nothing new to report
+    clock.now += 5.1
+    guard.run(lambda: "back")
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert sum("unreachable" in m for m in messages) == 1
+    assert sum("reachable again" in m for m in messages) == 1

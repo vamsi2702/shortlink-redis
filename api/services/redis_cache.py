@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from collections.abc import Callable
 
@@ -40,7 +41,13 @@ class Guard:
 
     A "circuit breaker": after a connection failure it refuses to try again for a few seconds
     (CacheUnavailable at once, no network call), so a dead MiniRedis costs one slow request
-    instead of making every request wait for a timeout. Then it lets one call through to check.
+    instead of making every request wait for a timeout.
+
+    When the wait is over, exactly ONE call goes through to check whether MiniRedis is back; the
+    calls that arrive while it is checking keep skipping. This matters because a dead server can
+    take seconds to fail (resolving the name of a stopped Docker container took 3 to 8 seconds in
+    the reliability test, which the socket timeout does not cover): if every call that arrived
+    after the wait tried at once, every one of them would stall.
     """
 
     def __init__(
@@ -50,24 +57,43 @@ class Guard:
             retry_seconds = config.MINIREDIS_RETRY_SECONDS
         self._retry_seconds = retry_seconds
         self._clock = clock
-        self._down_until = 0.0  # while the clock is before this, MiniRedis is considered down
+        self._lock = threading.Lock()  # guards _down_until; never held while calling MiniRedis
+        self._down_until = 0.0  # 0: MiniRedis is believed up. Otherwise: skip calls until this time
 
     def run[T](self, operation: Callable[[], T]) -> T:
-        if self._clock() < self._down_until:
-            metrics.inc(MINIREDIS_ERRORS, kind="skipped")  # not tried: the breaker is open
-            raise CacheUnavailable("MiniRedis is marked as down")
+        with self._lock:
+            now = self._clock()
+            if now < self._down_until:
+                metrics.inc(MINIREDIS_ERRORS, kind="skipped")  # not tried: the breaker is open
+                raise CacheUnavailable("MiniRedis is marked as down")
+            probing = self._down_until != 0.0  # the wait is over: this call is the one to check
+            if probing:
+                self._down_until = now + self._retry_seconds  # keep the others away meanwhile
         try:
-            return operation()
+            result = operation()
         except (redis.ConnectionError, redis.TimeoutError) as exc:
             metrics.inc(MINIREDIS_ERRORS, kind="unreachable")
-            if self._clock() >= self._down_until:  # log the outage once, not once per request
-                log.warning("MiniRedis unreachable (%s); retrying in %ss", exc, self._retry_seconds)
-            self._down_until = self._clock() + self._retry_seconds
+            with self._lock:
+                if self._down_until == 0.0:  # the first failure of this outage: say so once
+                    log.warning(
+                        "MiniRedis unreachable (%s); retrying every %ss", exc, self._retry_seconds
+                    )
+                self._down_until = self._clock() + self._retry_seconds
             raise CacheUnavailable(str(exc)) from exc
         except redis.RedisError as exc:  # the server answered, with an error: it is not down
             metrics.inc(MINIREDIS_ERRORS, kind="error_reply")
             log.warning("MiniRedis returned an error: %s", exc)
+            if probing:
+                self._close_breaker()
             raise CacheUnavailable(str(exc)) from exc
+        if probing:  # the check succeeded: MiniRedis is back
+            self._close_breaker()
+        return result
+
+    def _close_breaker(self) -> None:
+        with self._lock:
+            self._down_until = 0.0
+        log.info("MiniRedis is reachable again")
 
 
 class RedisCache:
