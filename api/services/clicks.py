@@ -4,8 +4,11 @@ from datetime import UTC, datetime
 from typing import Protocol
 
 import redis
+from sqlalchemy import insert, select
+from sqlalchemy.orm import Session
 
 from api import config
+from api.models import Click, Link
 from api.services.redis_cache import CacheUnavailable, Guard
 
 
@@ -93,3 +96,25 @@ def record_click(queue: ClickQueue, code: str) -> bool:
     """Queue one click on a link. Never raises: a click that cannot be queued must not break the
     redirect."""
     return queue.push(make_event(code))
+
+
+def save_clicks(db: Session, events: list[str]) -> int:
+    """Write a batch of click events to the clicks table; returns how many rows were saved.
+
+    Two database round trips for the whole batch: one query finds the ids of all the links, one
+    INSERT adds all the rows. Events that are malformed, or for links that no longer exist, are
+    skipped.
+    """
+    parsed = [p for p in map(parse_event, events) if p is not None]
+    if not parsed:
+        return 0
+    codes = {code for code, _ in parsed}
+    found = db.execute(select(Link.code, Link.id).where(Link.code.in_(codes)))
+    link_ids = {code: link_id for code, link_id in found}
+    rows = [
+        {"link_id": link_ids[code], "clicked_at": at} for code, at in parsed if code in link_ids
+    ]
+    if rows:
+        db.execute(insert(Click), rows)
+    db.commit()
+    return len(rows)
