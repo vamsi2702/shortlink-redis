@@ -166,7 +166,7 @@ class Recorder:
     """A cache that records calls and answers as if the counter key expired mid-way."""
 
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[tuple] = []
 
     def set_nx(self, key, value, ttl):
         self.calls.append(("set_nx", key, ttl))

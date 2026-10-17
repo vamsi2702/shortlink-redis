@@ -100,7 +100,7 @@ def _encode_into(value: object, out: list[bytes]) -> None:
     elif isinstance(value, int):
         out.append(b":%d\r\n" % value)
     elif isinstance(value, bytes | bytearray):
-        out.append(b"$%d\r\n%b\r\n" % (len(value), value))
+        out.append(b"$%d\r\n%b\r\n" % (len(value), bytes(value)))  # no copy if already bytes
     elif isinstance(value, str):
         data = value.encode()  # the length counts BYTES, not characters
         out.append(b"$%d\r\n%b\r\n" % (len(data), data))

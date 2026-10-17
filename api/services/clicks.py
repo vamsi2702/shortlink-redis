@@ -1,7 +1,7 @@
 import time
 from collections import deque
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Protocol, cast
 
 import redis
 from sqlalchemy import insert, select
@@ -41,8 +41,10 @@ class RedisClickQueue:
         return True
 
     def pop_batch(self, count: int) -> list[str]:
-        events = self._guard.run(lambda: self._client.rpop(config.CLICK_QUEUE_KEY, count))
-        return events or []  # RPOP with a count answers null when the list does not exist
+        reply = self._guard.run(lambda: self._client.rpop(config.CLICK_QUEUE_KEY, count))
+        # with a count, RPOP answers a list (of str, since decode_responses=True), or null when
+        # the list does not exist
+        return cast("list[str]", reply or [])
 
 
 class NullClickQueue:
@@ -66,7 +68,7 @@ class InMemoryClickQueue:
         return True
 
     def pop_batch(self, count: int) -> list[str]:
-        batch = []
+        batch: list[str] = []
         while self.events and len(batch) < count:
             batch.append(self.events.pop())
         return batch

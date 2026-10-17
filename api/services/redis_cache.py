@@ -2,6 +2,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from typing import cast
 
 import redis
 from redis.backoff import NoBackoff
@@ -113,7 +114,8 @@ class RedisCache:
 
     def get(self, key: str) -> str | None:
         try:
-            return self._guard.run(lambda: self._client.get(key))
+            # redis-py types a reply as bytes | str | None; with decode_responses=True it is a str
+            return cast("str | None", self._guard.run(lambda: self._client.get(key)))
         except CacheUnavailable:
             return None
 

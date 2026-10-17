@@ -27,7 +27,8 @@ def raw_connection(address) -> socket.socket:
 
 
 def read_replies(connection, count) -> list:
-    parser, replies = Parser(), []
+    parser = Parser()
+    replies: list = []
     while len(replies) < count:
         data = connection.recv(65536)
         if not data:

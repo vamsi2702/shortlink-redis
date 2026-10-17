@@ -215,7 +215,8 @@ def document(panels: list[Panel], path: Path) -> None:
 
 def write_concurrency_chart(results: dict, path: Path) -> None:
     """Throughput and p99 latency against the number of connections, for each server."""
-    rps, p99 = {}, {}
+    rps: dict[str, list[tuple[float, float]]] = {}
+    p99: dict[str, list[tuple[float, float]]] = {}
     for data in results["servers"].values():
         good = [(int(c), r) for c, r in data["levels"].items() if "error" not in r]
         if good:

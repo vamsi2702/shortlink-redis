@@ -57,7 +57,7 @@ REAL_REDIS = [
 def messages_from(*chunks: bytes, **options) -> list:
     """Feed the chunks one after another and collect every message the parser yields."""
     parser = Parser(**options)
-    found = []
+    found: list = []
     for chunk in chunks:
         parser.feed(chunk)
         found.extend(parser.messages())
