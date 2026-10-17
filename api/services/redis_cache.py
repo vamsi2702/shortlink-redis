@@ -7,6 +7,7 @@ from redis.backoff import NoBackoff
 from redis.retry import Retry
 
 from api import config
+from api.services.metrics import MINIREDIS_ERRORS, metrics
 
 log = logging.getLogger("api.redis_cache")
 
@@ -53,15 +54,18 @@ class Guard:
 
     def run[T](self, operation: Callable[[], T]) -> T:
         if self._clock() < self._down_until:
+            metrics.inc(MINIREDIS_ERRORS, kind="skipped")  # not tried: the breaker is open
             raise CacheUnavailable("MiniRedis is marked as down")
         try:
             return operation()
         except (redis.ConnectionError, redis.TimeoutError) as exc:
+            metrics.inc(MINIREDIS_ERRORS, kind="unreachable")
             if self._clock() >= self._down_until:  # log the outage once, not once per request
                 log.warning("MiniRedis unreachable (%s); retrying in %ss", exc, self._retry_seconds)
             self._down_until = self._clock() + self._retry_seconds
             raise CacheUnavailable(str(exc)) from exc
         except redis.RedisError as exc:  # the server answered, with an error: it is not down
+            metrics.inc(MINIREDIS_ERRORS, kind="error_reply")
             log.warning("MiniRedis returned an error: %s", exc)
             raise CacheUnavailable(str(exc)) from exc
 

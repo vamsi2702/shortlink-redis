@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from api import config
 from api.models import Click, Link
+from api.services.metrics import CLICKS_QUEUED, metrics
 from api.services.redis_cache import CacheUnavailable, Guard
 
 
@@ -95,7 +96,9 @@ def parse_event(event: str) -> tuple[str, datetime] | None:
 def record_click(queue: ClickQueue, code: str) -> bool:
     """Queue one click on a link. Never raises: a click that cannot be queued must not break the
     redirect."""
-    return queue.push(make_event(code))
+    queued = queue.push(make_event(code))
+    metrics.inc(CLICKS_QUEUED, result="queued" if queued else "dropped")
+    return queued
 
 
 def save_clicks(db: Session, events: list[str]) -> int:

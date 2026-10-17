@@ -6,6 +6,7 @@ from api import config
 from api.models import Click, Link
 from api.services.cache import Cache
 from api.services.codes import generate_code
+from api.services.metrics import CACHE_LOOKUPS, metrics
 
 MAX_ATTEMPTS = 5
 
@@ -23,7 +24,9 @@ def resolve_long_url(db: Session, cache: Cache, code: str) -> str | None:
     key = link_cache_key(code)
     cached = cache.get(key)
     if cached is not None:
+        metrics.inc(CACHE_LOOKUPS, result="hit")
         return cached or None  # an empty string means "known not to exist"
+    metrics.inc(CACHE_LOOKUPS, result="miss")
     link = get_link_by_code(db, code)
     if link is None:
         cache.set(key, "", ttl=config.NOT_FOUND_TTL_SECONDS)

@@ -11,6 +11,7 @@ from api.db import SessionLocal
 from api.models import User
 from api.services.cache import Cache, default_cache
 from api.services.clicks import ClickQueue, NullClickQueue, RedisClickQueue
+from api.services.metrics import RATE_LIMITED, metrics
 from api.services.ratelimit import allow_request, client_identity
 from api.services.redis_cache import Guard, RedisCache, connect
 from api.services.security import decode_access_token
@@ -58,6 +59,7 @@ def rate_limited(scope: str) -> params.Depends:
 
     def check(request: Request, cache: CacheDep) -> None:
         if not allow_request(cache, scope, client_identity(request)):
+            metrics.inc(RATE_LIMITED, scope=scope)
             raise HTTPException(
                 status_code=429,
                 detail="Too many requests",
