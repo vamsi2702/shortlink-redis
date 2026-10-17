@@ -7,7 +7,7 @@ written from scratch in Python for this project.
 
 **Status:** complete. The website backend, MiniRedis, the click recording, the measurements and the
 automatic checks are all built and tested. Deploying it to the cloud (Kubernetes, AWS) is an
-optional extra that has not been started; see [PLAN.md](PLAN.md).
+optional extra that has not been started.
 
 ---
 
@@ -156,8 +156,7 @@ shortlink-redis/
 │   └── threaded_server.py    the "one thread per client" experiment
 ├── bench/                    everything for measuring: dataset, load tester, experiments, results/
 ├── docker-compose.yml        run the whole system with one command
-├── .github/workflows/ci.yml  automatic checks on every push
-└── PLAN.md                   the plan this was built from
+└── .github/workflows/ci.yml  automatic checks on every push
 ```
 
 ## Words you will meet
@@ -292,7 +291,7 @@ modules are `commands.py` 99%, `resp.py` 98%, `store.py` 97% and `server.py` 86%
 
 ## MiniRedis
 
-A Redis-compatible server written from scratch (the plan is in [PLAN.md](PLAN.md)).
+A Redis-compatible server written from scratch.
 
 ```powershell
 python -m miniredis.server            # listens on 127.0.0.1:6380
@@ -478,9 +477,11 @@ It runs the same commands and gives byte-identical answers (a test checks this).
 
 16 clients, 120 seconds, about 190 requests/s. After the cache is warm, MiniRedis is **killed with
 SIGKILL** (a crash, not a tidy shutdown) at 15 seconds and started again, empty, 15 seconds later.
-Median of three repeats.
+The table shows the median of three repeats.
 
 ![Hit ratio, latency and throughput during the outage](bench/results/reliability.svg)
+
+The chart shows the first of the three repeats, second by second. The other two show the same pattern.
 
 | Measured | Result |
 |---|---|
@@ -503,8 +504,8 @@ Median of three repeats.
   (2,900 to 3,500 per repeat) were redirects served **while MiniRedis was down**, roughly the
   request rate times the length of the outage. Only 21 to 198 clicks, up to about a second of
   traffic, were sitting in the queue at the moment of the kill, which is when the worker last
-  emptied it. Whether that is acceptable depends on what clicks are used for; the design that
-  would avoid it (a log on disk) was built and then removed, see [PLAN.md](PLAN.md).
+  emptied it. Whether that is acceptable depends on what clicks are used for. The design that
+  would avoid it, a log on disk, was built and then removed to keep the project simple.
 - **A bug that this test found.** The first run showed p99 latency spiking to **7.5 to 8.1 seconds**
   shortly after the kill, and the throughput chart dropped to zero for a moment. The cause: with the
   MiniRedis container dead, resolving its name takes 3 to 8 seconds, and a socket timeout does not
