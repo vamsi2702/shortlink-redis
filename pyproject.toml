@@ -29,7 +29,7 @@ dev = [
 packages = ["miniredis", "api", "bench"]
 
 [tool.pytest.ini_options]
-testpaths = ["miniredis/tests", "api/tests"]
+testpaths = ["miniredis/tests", "api/tests", "bench/tests"]
 asyncio_mode = "auto"
 
 [tool.ruff]
