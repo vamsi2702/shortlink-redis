@@ -1,20 +1,47 @@
 # ShortLink + MiniRedis
 
-A URL shortener backend (FastAPI + PostgreSQL) that will use a Redis-compatible cache server written from scratch in Python.
+A URL shortener backend (FastAPI + PostgreSQL) whose cache, rate limiter and click queue run on a Redis-compatible server written from scratch in Python (MiniRedis).
 
 Work in progress. See [PLAN.md](PLAN.md) for the roadmap and [docs/DIAGRAMS.md](docs/DIAGRAMS.md) for diagrams.
 
-**Status:** Phase 1 (the backend) and Phases 2-3 (MiniRedis: protocol, commands, expiry, lists, hashes, Pub/Sub) are complete. The API still uses an in-process cache behind the same interface; swapping in MiniRedis is Phase 4.
+**Status:** Phase 1 (the backend), Phases 2-3 (MiniRedis: protocol, commands, expiry, lists, hashes, Pub/Sub) and Phase 4 (the API uses MiniRedis for caching, rate limiting and a click queue, with a click worker and `/metrics`) are complete. Phase 5 (measuring it) is next.
 
-## Setup
+## Run everything
+
+```powershell
+docker compose up -d --build   # PostgreSQL, MiniRedis, the API, the click worker (tables are created for you)
+```
+
+The API is then at http://localhost:8000 (interactive docs at `/docs`, numbers at `/metrics`).
+`docker compose down` stops it; the database keeps its data, MiniRedis does not (it is memory only).
+
+```
+browser ──► API ──► MiniRedis   cache (GET/SET), rate limit (SET NX + INCR), click queue (LPUSH)
+             │          ▲
+             ▼          │ RPOP in batches
+         PostgreSQL ◄── click worker
+```
+
+## Setup for development
+
+Run only the database in Docker and the rest on your machine:
 
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-docker compose up -d            # starts PostgreSQL
+docker compose up -d postgres   # starts PostgreSQL
 alembic upgrade head            # creates the tables
 uvicorn api.main:app --reload   # http://127.0.0.1:8000  (interactive docs at /docs)
+```
+
+That uses the API's own in-process cache, and clicks are not recorded. To use MiniRedis too, start it
+and the worker in two more terminals and point the API at it:
+
+```powershell
+python -m miniredis.server                     # 127.0.0.1:6380
+$env:MINIREDIS_URL = "redis://127.0.0.1:6380"  # set this before starting uvicorn and the worker
+python -m api.worker                           # saves queued clicks to PostgreSQL
 ```
 
 Run the tests (PostgreSQL must be running):
@@ -79,6 +106,11 @@ transactions, scripting, replication, `FLUSHALL`, eviction when memory is full.
 | `PATCH /links/{code}` | token | Change where your link points |
 | `DELETE /links/{code}` | token | Delete your link and its clicks |
 | `GET /{code}` | none | 302 redirect to the long URL, or 404 |
+| `GET /metrics` | none | Request counts, cache hits and misses, latency (Prometheus text format). Keep it off the public internet |
+
+Redirects, `POST /shorten` and `/auth/register` + `/auth/login` are rate limited: past 100 requests
+a minute from one client (the signed-in user, or else the IP address), they answer `429` with a
+`Retry-After` header. Each of the three groups has its own count.
 
 Send the token as `Authorization: Bearer <token>`. In `/docs`, use the **Authorize** button and paste the token.
 
@@ -88,8 +120,25 @@ Send the token as `Authorization: Bearer <token>`. In `/docs`, use the **Authori
 - **URL validation:** only `http`/`https`; no credentials in the URL; no localhost, private or reserved addresses. No DNS lookup is done, so a public name that points to a private address is not caught.
 - **Caching:** redirects use cache-aside. Lookups hit the cache first (5 minute TTL), then Postgres. Unknown codes are cached for 30 seconds. Creating, editing and deleting a link clears its entry.
 - **Auth:** passwords are hashed with bcrypt; login returns a signed JWT. Other people's links return 404, not 403, so their existence is not revealed.
-- **Redirect status:** 302, not 301, so browsers keep asking the server and clicks can be counted later.
+- **Redirect status:** 302, not 301, so browsers keep asking the server and clicks can be counted.
+- **Rate limiting:** a fixed window per client: `SET key 0 NX EX 60`, then `INCR`. Past the limit the answer is 429. If MiniRedis is down the limiter lets requests through ("fails open") instead of taking the site down.
+- **Click queue:** a redirect only does one `LPUSH clicks "<code> <time>"` into MiniRedis. The worker takes up to 100 events at a time (`RPOP clicks 100`) and writes them to the `clicks` table with one INSERT. If the database write fails, the events are put back.
+- **When MiniRedis is down:** redirects fall back to Postgres, and after one failure the API stops trying MiniRedis for 5 seconds so the dead server does not slow every request. Clicks queued at that moment, and clicks still waiting in a MiniRedis that restarts, are lost (it is memory only).
+- **Metrics:** `/metrics` counts requests by route *template* (`/{code}`, not each real code), and records cache hits and misses, 429s, queued and dropped clicks, and MiniRedis failures. The numbers are per process and reset on restart.
 
 ## Configuration
 
-Environment variables, all optional for local development: `DATABASE_URL`, `BASE_URL`, `JWT_SECRET` (**must be set in any real deployment**), `JWT_EXPIRE_MINUTES`, `BCRYPT_ROUNDS`, `CACHE_TTL_SECONDS`, `NOT_FOUND_TTL_SECONDS`.
+Environment variables, all optional for local development:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DATABASE_URL` | local Postgres | Where the data lives |
+| `BASE_URL` | `http://localhost:8000` | Short links are `BASE_URL/<code>` |
+| `JWT_SECRET` | dev-only value | **Must be set in any real deployment** |
+| `JWT_EXPIRE_MINUTES`, `BCRYPT_ROUNDS` | 60, 12 | Login token life, password hashing cost |
+| `MINIREDIS_URL` | empty | e.g. `redis://localhost:6380`. Empty: use the in-process cache; clicks are not recorded |
+| `MINIREDIS_TIMEOUT_SECONDS` | 0.25 | A MiniRedis call slower than this counts as failed |
+| `MINIREDIS_RETRY_SECONDS` | 5 | After a failure, wait this long before trying MiniRedis again |
+| `CACHE_TTL_SECONDS`, `NOT_FOUND_TTL_SECONDS` | 300, 30 | How long a redirect, or an unknown code, stays cached |
+| `RATE_LIMIT_REQUESTS`, `RATE_LIMIT_WINDOW_SECONDS` | 100, 60 | The rate limit |
+| `CLICK_QUEUE_KEY`, `CLICK_BATCH_SIZE`, `CLICK_WORKER_INTERVAL_SECONDS` | clicks, 100, 1 | The click queue and how the worker drains it |

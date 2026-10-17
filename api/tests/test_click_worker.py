@@ -63,7 +63,7 @@ def test_save_clicks_skips_unknown_links_and_garbage(db):
 
     assert save_clicks(db, events) == 2
 
-    assert click_count(db) == 2
+    assert click_count(db, link) == 2  # (not the whole table: other data may already be in it)
 
 
 def test_save_clicks_with_nothing_to_save(db):
@@ -72,8 +72,8 @@ def test_save_clicks_with_nothing_to_save(db):
 
 
 def test_a_batch_is_written_with_few_sql_statements(db):
-    code = make_link(db).code
-    events = [make_event(code) for _ in range(100)]
+    link = make_link(db)
+    events = [make_event(link.code) for _ in range(100)]
     statements = []
 
     def record(conn, cursor, statement, parameters, context, executemany):
@@ -87,7 +87,7 @@ def test_a_batch_is_written_with_few_sql_statements(db):
 
     kinds = [s[0] for s in statements if s[0] in ("SELECT", "INSERT")]
     assert kinds == ["SELECT", "INSERT"]  # one lookup of the link ids, one INSERT for all 100 rows
-    assert click_count(db) == 100
+    assert click_count(db, link) == 100
 
 
 # ---- drain_once ---------------------------------------------------------------------------------

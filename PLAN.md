@@ -220,31 +220,31 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 ### Phase 4 — Integrate
 
 **4.1 MiniRedis client in the API**
-- [ ] Implement the `Cache` interface on top of `redis-py` pointed at MiniRedis
+- [x] Implement the `Cache` interface on top of `redis-py` pointed at MiniRedis
 - **Done when:** the API redirect cache is served from MiniRedis, and all Phase 1 tests still pass.
 
 **4.2 Fallback on failure**
-- [ ] If MiniRedis is down, redirects fall back to Postgres
+- [x] If MiniRedis is down, redirects fall back to Postgres
 - **Done when:** stopping MiniRedis does not break redirects.
 
 **4.3 Rate limiting**
-- [ ] Fixed/sliding window via `SET NX EX` + `INCR` (or a token bucket); returns 429; fails open if MiniRedis is down
+- [x] Fixed/sliding window via `SET NX EX` + `INCR` (or a token bucket); returns 429; fails open if MiniRedis is down
 - **Done when:** the 101st request in a minute gets 429 and the counter resets afterwards.
 
 **4.4 Click queue**
-- [ ] On each redirect, `LPUSH` a click event
+- [x] On each redirect, `LPUSH` a click event
 - **Done when:** events appear in the list.
 
 **4.5 Click worker**
-- [ ] Background worker drains the list and writes analytics to Postgres in batches
+- [x] Background worker drains the list and writes analytics to Postgres in batches
 - **Done when:** click counts in Postgres match the number of redirects.
 
 **4.6 Metrics**
-- [ ] `/metrics` endpoint: request counts, cache hits/misses, latency
+- [x] `/metrics` endpoint: request counts, cache hits/misses, latency
 - **Done when:** the numbers change as you make requests.
 
 **4.7 Compose everything**
-- [ ] `docker-compose.yml` runs API, Postgres and MiniRedis together
+- [x] `docker-compose.yml` runs API, Postgres and MiniRedis together
 - **Done when:** `docker compose up` gives a working system end to end.
 
 ### Phase 5 — Measure and polish

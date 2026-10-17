@@ -15,6 +15,76 @@ services:
       timeout: 3s
       retries: 10
 
+  # MiniRedis: our own Redis-compatible server. It keeps everything in memory, so it has no volume:
+  # when it restarts, the cache and any click events not yet saved are gone.
+  miniredis:
+    image: shortlink-app
+    pull_policy: never  # built by the api service below
+    command: ["python", "-m", "miniredis.server", "--host", "0.0.0.0", "--port", "6380"]
+    ports:
+      - "6380:6380"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import socket; s = socket.create_connection(('127.0.0.1', 6380), 2); s.sendall(b'PING\\r\\n'); assert s.recv(16) == b'+PONG\\r\\n'"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs once: creates or updates the database tables, then exits
+  migrate:
+    image: shortlink-app
+    pull_policy: never  # built by the api service below
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://shortlink:shortlink@postgres:5432/shortlink
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # The image for api, worker, miniredis and migrate is built here, once (see Dockerfile)
+  api:
+    build: .
+    image: shortlink-app
+    environment: &app-env
+      DATABASE_URL: postgresql+psycopg://shortlink:shortlink@postgres:5432/shortlink
+      MINIREDIS_URL: redis://miniredis:6380
+      BASE_URL: http://localhost:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      miniredis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Saves the click events that redirects leave in MiniRedis into the Postgres clicks table
+  worker:
+    image: shortlink-app
+    pull_policy: never  # built by the api service below
+    command: ["python", "-m", "api.worker"]
+    environment: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      miniredis:
+        condition: service_healthy
+    restart: unless-stopped
+
   # Real Redis, used only as a reference to compare MiniRedis against (RESP bytes, benchmarks).
   # Not started by default: run `docker compose up -d redis`.
   redis:
