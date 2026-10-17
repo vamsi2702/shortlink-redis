@@ -76,6 +76,13 @@ class ThreadedServer:
     def close(self) -> None:
         self._closing.set()
         if self._listener is not None:
+            # The accept thread is blocked inside accept(). On Windows, closing the socket wakes
+            # it up. On Linux it does NOT, and the port keeps accepting connections. shutdown()
+            # wakes it on Linux; on Windows it raises, which is why the error is ignored.
+            try:
+                self._listener.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             self._listener.close()
         for connection in list(self._connections):
             try:
