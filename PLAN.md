@@ -250,31 +250,31 @@ Estimated 6–8 weeks part-time, but **go at your own pace**. Every phase is spl
 ### Phase 5 — Measure and polish
 
 **5.1 Dataset**
-- [ ] `bench/seed.py` generates 100k links (see section 6)
+- [x] `bench/seed.py` generates 100k links (see section 6)
 - **Done when:** one command rebuilds the same dataset.
 
 **5.2 Workload generator**
-- [ ] `bench/workload.py` with Zipf and uniform access patterns
+- [x] `bench/workload.py` with Zipf and uniform access patterns
 - **Done when:** it produces a request stream and a first single-client test runs.
 
 **5.3 Load test, three setups**
-- [ ] Redirects with cache off / real Redis / MiniRedis; record the metrics in section 7
+- [x] Redirects with cache off / real Redis / MiniRedis; record the metrics in section 7
 - **Done when:** you have a results table with p50, p95, p99 and ops/sec.
 
 **5.4 Reliability tests**
-- [ ] Kill MiniRedis under load; measure how long the cache takes to warm up again and how many click events are lost (MiniRedis keeps nothing on disk)
+- [x] Kill MiniRedis under load; measure how long the cache takes to warm up again and how many click events are lost (MiniRedis keeps nothing on disk)
 - **Done when:** the numbers are recorded.
 
 **5.5 Concurrency experiment**
-- [ ] Threaded server variant vs asyncio at 10, 100, 1,000 connections
+- [x] Threaded server variant vs asyncio at 10, 100, 1,000 connections
 - **Done when:** a short write-up with a chart exists.
 
 **5.6 CI**
-- [ ] GitHub Actions: lint, type check, tests
+- [x] GitHub Actions: lint, type check, tests
 - **Done when:** a push shows a green check.
 
 **5.7 README**
-- [ ] Architecture diagram, benchmark chart, how to run, design decisions and limitations
+- [x] Architecture diagram, benchmark chart, how to run, design decisions and limitations
 - **Done when:** a stranger can clone, run, and see the numbers.
 
 ### Phase 6 — DevOps and deployment (after Phase 5, fully optional)
@@ -443,6 +443,8 @@ The project runs on one machine. This section is for the README and for intervie
 
 Questions to be ready for: How do you avoid code collisions? What happens when the cache dies? How do you keep the cache consistent after an edit? Read-heavy or write-heavy, and how does that change the design?
 
-## 12. Resume bullet (fill in real numbers)
+## 12. Resume bullet (real numbers from Phase 5)
 
-> Built a URL shortener backend (FastAPI, PostgreSQL) with a custom Redis-compatible cache server written from scratch in Python (RESP protocol, TTL expiry with a background cleaner, lists, hashes, pub/sub); cut p99 redirect latency by **X%** at **N** concurrent clients.
+> Built a URL shortener backend (FastAPI, PostgreSQL) with a custom Redis-compatible cache server written from scratch in Python (RESP protocol, TTL expiry with a background cleaner, lists, hashes, pub/sub, rate limiting and a click queue on top of it). Benchmarked it against real Redis 7: **about 4x slower in raw throughput** (21k vs 81k GET/s at 10 connections), yet **indistinguishable at the API level** (3.96 ms vs 3.86 ms median redirect, **22% below no cache**). Its asyncio design beat a thread-per-connection variant by 2.2-3.1x at 10-1,000 connections. Killing it with SIGKILL under load caused **0 failed requests in about 20,000**; the benchmark exposed a 7-8 s p99 stall (DNS resolution of a dead container, a circuit-breaker probe storm), which I fixed to 270-330 ms.
+
+Be honest about what the numbers do **not** show: p99 redirect latency did not improve measurably with a cache (the differences were inside the run-to-run spread), because the API process, not the cache, is the bottleneck. Do not claim a p99 reduction.

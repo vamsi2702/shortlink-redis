@@ -1,0 +1,341 @@
+{
+  "params": {
+    "setups": "redis-full,miniredis-full",
+    "pattern": "zipf",
+    "levels": [
+      1,
+      32
+    ],
+    "duration": 15.0,
+    "repeats": 3,
+    "warmup_requests": 30000,
+    "cold_seconds": 15.0,
+    "links": 100000,
+    "out": "redirects-full"
+  },
+  "setups": {
+    "redis-full": {
+      "label": "Real Redis, rate limit and clicks on",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 1853,
+        "errors": 0,
+        "requests_per_s": 123.53333333333333,
+        "p50_ms": 236.54700699989917,
+        "p95_ms": 405.69492800023,
+        "p99_ms": 502.12927699976717,
+        "max_ms": 598.6676550000993,
+        "cache_hit_ratio": 0.43830262423227245,
+        "statuses": {
+          "302": 1762,
+          "201": 91
+        },
+        "timeline": null
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2695,
+              "errors": 0,
+              "requests_per_s": 179.66666666666666,
+              "p50_ms": 158.2953159995668,
+              "p95_ms": 320.27165399995283,
+              "p99_ms": 429.2016250001325,
+              "max_ms": 631.5624889994069,
+              "cache_hit_ratio": 0.7455391776570985,
+              "statuses": {
+                "302": 2550,
+                "201": 145
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2614,
+              "errors": 0,
+              "requests_per_s": 174.26666666666668,
+              "p50_ms": 170.61786699923687,
+              "p95_ms": 308.1086479996884,
+              "p99_ms": 378.4785419993568,
+              "max_ms": 573.614576998807,
+              "cache_hit_ratio": 0.7550938873351978,
+              "statuses": {
+                "302": 2476,
+                "201": 138
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2782,
+              "errors": 0,
+              "requests_per_s": 185.46666666666667,
+              "p50_ms": 155.241009000747,
+              "p95_ms": 291.4607500006241,
+              "p99_ms": 373.220024001057,
+              "max_ms": 575.6913360000908,
+              "cache_hit_ratio": 0.7648169120422801,
+              "statuses": {
+                "302": 2627,
+                "201": 155
+              },
+              "timeline": null
+            }
+          ],
+          "median": {
+            "requests_per_s": 179.66666666666666,
+            "p50_ms": 158.2953159995668,
+            "p95_ms": 308.1086479996884,
+            "p99_ms": 378.4785419993568,
+            "cache_hit_ratio": 0.7550938873351978,
+            "errors": 0,
+            "requests": 8091
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2905,
+              "errors": 0,
+              "requests_per_s": 193.66666666666666,
+              "p50_ms": 4.40546100071515,
+              "p95_ms": 9.284722000302281,
+              "p99_ms": 16.149396000400884,
+              "max_ms": 31.196058998830267,
+              "cache_hit_ratio": 0.7732705541470482,
+              "statuses": {
+                "302": 2760,
+                "201": 145
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2775,
+              "errors": 0,
+              "requests_per_s": 185.0,
+              "p50_ms": 4.58340200020757,
+              "p95_ms": 9.46923199990124,
+              "p99_ms": 16.900364998946316,
+              "max_ms": 33.87803400073608,
+              "cache_hit_ratio": 0.7745358090185677,
+              "statuses": {
+                "302": 2639,
+                "201": 136
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2746,
+              "errors": 0,
+              "requests_per_s": 183.06666666666666,
+              "p50_ms": 4.590614998960518,
+              "p95_ms": 10.32007400135626,
+              "p99_ms": 22.180536998348543,
+              "max_ms": 35.33895200052939,
+              "cache_hit_ratio": 0.7720306513409961,
+              "statuses": {
+                "302": 2609,
+                "201": 137
+              },
+              "timeline": null
+            }
+          ],
+          "median": {
+            "requests_per_s": 185.0,
+            "p50_ms": 4.58340200020757,
+            "p95_ms": 9.46923199990124,
+            "p99_ms": 16.900364998946316,
+            "cache_hit_ratio": 0.7732705541470482,
+            "errors": 0,
+            "requests": 8426
+          }
+        }
+      }
+    },
+    "miniredis-full": {
+      "label": "MiniRedis, rate limit and clicks on",
+      "cold": {
+        "pattern": "zipf",
+        "clients": 32,
+        "seconds": 15.0,
+        "requests": 1854,
+        "errors": 0,
+        "requests_per_s": 123.6,
+        "p50_ms": 238.8787889995001,
+        "p95_ms": 403.2944339996902,
+        "p99_ms": 503.36358999993536,
+        "max_ms": 584.7941170013655,
+        "cache_hit_ratio": 0.4398200224971879,
+        "statuses": {
+          "302": 1762,
+          "201": 92
+        },
+        "timeline": null
+      },
+      "levels": {
+        "32": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2226,
+              "errors": 0,
+              "requests_per_s": 148.4,
+              "p50_ms": 202.8603889993974,
+              "p95_ms": 337.36867900006473,
+              "p99_ms": 400.8381389994611,
+              "max_ms": 471.8410869991203,
+              "cache_hit_ratio": 0.7482386096759042,
+              "statuses": {
+                "302": 2101,
+                "201": 125
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2617,
+              "errors": 0,
+              "requests_per_s": 174.46666666666667,
+              "p50_ms": 181.02034599905892,
+              "p95_ms": 270.75055899877043,
+              "p99_ms": 327.97099799972784,
+              "max_ms": 447.4200780005049,
+              "cache_hit_ratio": 0.7545889864325619,
+              "statuses": {
+                "302": 2481,
+                "201": 136
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 32,
+              "seconds": 15.0,
+              "requests": 2584,
+              "errors": 0,
+              "requests_per_s": 172.26666666666668,
+              "p50_ms": 174.9355009997089,
+              "p95_ms": 308.0331790006312,
+              "p99_ms": 387.0054680010071,
+              "max_ms": 589.6282789999532,
+              "cache_hit_ratio": 0.7646583097452487,
+              "statuses": {
+                "302": 2444,
+                "201": 140
+              },
+              "timeline": null
+            }
+          ],
+          "median": {
+            "requests_per_s": 172.26666666666668,
+            "p50_ms": 181.02034599905892,
+            "p95_ms": 308.0331790006312,
+            "p99_ms": 387.0054680010071,
+            "cache_hit_ratio": 0.7545889864325619,
+            "errors": 0,
+            "requests": 7427
+          }
+        },
+        "1": {
+          "runs": [
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2487,
+              "errors": 0,
+              "requests_per_s": 165.8,
+              "p50_ms": 5.214609000177006,
+              "p95_ms": 10.75768699956825,
+              "p99_ms": 20.251461000952986,
+              "max_ms": 33.77901900057623,
+              "cache_hit_ratio": 0.7745346869712352,
+              "statuses": {
+                "302": 2363,
+                "201": 124
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2663,
+              "errors": 0,
+              "requests_per_s": 177.53333333333333,
+              "p50_ms": 4.8294709995388985,
+              "p95_ms": 9.686582001450006,
+              "p99_ms": 22.7884849991824,
+              "max_ms": 32.22543300034886,
+              "cache_hit_ratio": 0.7756714060031595,
+              "statuses": {
+                "302": 2531,
+                "201": 132
+              },
+              "timeline": null
+            },
+            {
+              "pattern": "zipf",
+              "clients": 1,
+              "seconds": 15.0,
+              "requests": 2550,
+              "errors": 0,
+              "requests_per_s": 170.0,
+              "p50_ms": 5.053299999417504,
+              "p95_ms": 10.515721000047051,
+              "p99_ms": 20.943939000062528,
+              "max_ms": 75.86117199934961,
+              "cache_hit_ratio": 0.7787427626137303,
+              "statuses": {
+                "302": 2417,
+                "201": 133
+              },
+              "timeline": null
+            }
+          ],
+          "median": {
+            "requests_per_s": 170.0,
+            "p50_ms": 5.053299999417504,
+            "p95_ms": 10.515721000047051,
+            "p99_ms": 20.943939000062528,
+            "cache_hit_ratio": 0.7756714060031595,
+            "errors": 0,
+            "requests": 7700
+          }
+        }
+      }
+    }
+  },
+  "environment": {
+    "date": "2026-10-17 16:08",
+    "host": "Windows 11, Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "docker": "28.3.3 cpus=16 memory=7273271296",
+    "redis": "Redis server v=7.4.11 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=f20da322597b16d7",
+    "python_in_containers": "Python 3.12.15",
+    "postgres": "postgres (PostgreSQL) 16.13 (Debian 16.13-1.pgdg13+1)",
+    "cpu_limits": "api 2, redis 1, miniredis 1, worker 1, load generator 4; postgres unlimited"
+  }
+}
