@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 
-from api.deps import CacheDep, DbSession
+from api.deps import CacheDep, DbSession, rate_limited
 from api.services.links import resolve_long_url
 
 router = APIRouter()
 
 
-@router.get("/{code}")
+@router.get("/{code}", dependencies=[rate_limited("redirect")])
 def redirect(code: str, db: DbSession, cache: CacheDep) -> RedirectResponse:
     long_url = resolve_long_url(db, cache, code)
     if long_url is None:

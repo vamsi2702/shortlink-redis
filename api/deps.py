@@ -2,7 +2,7 @@ from collections.abc import Iterator
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request, params
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -10,6 +10,7 @@ from api import config
 from api.db import SessionLocal
 from api.models import User
 from api.services.cache import Cache, default_cache
+from api.services.ratelimit import allow_request, client_identity
 from api.services.redis_cache import RedisCache, connect
 from api.services.security import decode_access_token
 
@@ -36,6 +37,24 @@ def get_cache() -> Cache:
 
 
 CacheDep = Annotated[Cache, Depends(get_cache)]
+
+
+def rate_limited(scope: str) -> params.Depends:
+    """A dependency that answers 429 when the client sends too many requests to routes of `scope`.
+
+    Use it in a route decorator: `@router.get("/x", dependencies=[rate_limited("x")])`.
+    """
+
+    def check(request: Request, cache: CacheDep) -> None:
+        if not allow_request(cache, scope, client_identity(request)):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many requests",
+                headers={"Retry-After": str(config.RATE_LIMIT_WINDOW_SECONDS)},
+            )
+
+    return Depends(check)
+
 
 # auto_error=False so we can answer a missing token ourselves (401, same as a bad token)
 bearer_scheme = HTTPBearer(auto_error=False)

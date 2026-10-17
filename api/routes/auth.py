@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from api.deps import CurrentUser, DbSession
+from api.deps import CurrentUser, DbSession, rate_limited
 from api.schemas import LoginRequest, RegisterRequest, TokenResponse, UserOut
 from api.services.security import create_access_token
 from api.services.users import EmailTaken, authenticate, create_user
@@ -8,7 +8,9 @@ from api.services.users import EmailTaken, authenticate, create_user
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/register", response_model=UserOut, status_code=201)
+@router.post(
+    "/register", response_model=UserOut, status_code=201, dependencies=[rate_limited("auth")]
+)
 def register(body: RegisterRequest, db: DbSession):
     try:
         return create_user(db, body.email, body.password)
@@ -16,7 +18,7 @@ def register(body: RegisterRequest, db: DbSession):
         raise HTTPException(status_code=409, detail="Email already registered") from None
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=TokenResponse, dependencies=[rate_limited("auth")])
 def login(body: LoginRequest, db: DbSession) -> TokenResponse:
     user = authenticate(db, body.email, body.password)
     if user is None:

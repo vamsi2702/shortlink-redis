@@ -21,6 +21,11 @@ MINIREDIS_TIMEOUT_SECONDS = float(os.environ.get("MINIREDIS_TIMEOUT_SECONDS", "0
 # After a failure, stop trying MiniRedis for this long, so a dead server does not slow every request
 MINIREDIS_RETRY_SECONDS = float(os.environ.get("MINIREDIS_RETRY_SECONDS", "5"))
 
+# Rate limiting: at most this many requests per client in each window (separately for redirects,
+# creating links, and signing in or registering)
+RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", "100"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", "60"))
+
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql+psycopg://shortlink:shortlink@localhost:5432/shortlink",

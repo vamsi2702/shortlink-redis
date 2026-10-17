@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Response
 
 from api.config import BASE_URL
-from api.deps import CacheDep, CurrentUser, DbSession, OptionalUser
+from api.deps import CacheDep, CurrentUser, DbSession, OptionalUser, rate_limited
 from api.models import Link
 from api.schemas import LinkOut, ShortenRequest, UpdateLinkRequest
 from api.services import links as links_service
@@ -28,7 +28,9 @@ def get_owned_link_or_404(db: DbSession, user: CurrentUser, code: str) -> Link:
     return link
 
 
-@router.post("/shorten", response_model=LinkOut, status_code=201)
+@router.post(
+    "/shorten", response_model=LinkOut, status_code=201, dependencies=[rate_limited("shorten")]
+)
 def shorten(
     body: ShortenRequest, db: DbSession, user: OptionalUser, cache: CacheDep
 ) -> LinkOut:
